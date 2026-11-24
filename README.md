@@ -32,7 +32,13 @@
 
 ## نصب (۲ دقیقه)
 
-فایل `mirage-release.tar.gz` را روی **هر دو سرور** آپلود کنید. نیازی به دسترسی سرور به GitHub نیست.
+روی **هر دو سرور** با کاربر root این دستور را بزنید. به هیچ پیش‌نیازی (Go، Python و…) نیاز نیست:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/hope-s/Mirage/main/install.sh)
+```
+
+اگر سرور ایران به GitHub دسترسی نداشت، فایل `mirage-release.tar.gz` را از [Releases](https://github.com/hope-s/Mirage/releases) دانلود کنید، روی سرور آپلود کنید و این را بزنید:
 
 ```bash
 tar xzf mirage-release.tar.gz && cd mirage && sudo bash install.sh

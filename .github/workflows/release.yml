@@ -1,0 +1,30 @@
+# Builds the release on every "v*" tag and attaches it to a GitHub Release,
+# so servers can install with the one-line command in the README.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+      - run: make release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mirage-release.tar.gz
+            dist/mirage-release.tar.gz.sha256
+            dist/mirage/bin/mirage-linux-amd64
+            dist/mirage/bin/mirage-linux-arm64
+            dist/mirage/bin/mirage-linux-armv7
+            install.sh
