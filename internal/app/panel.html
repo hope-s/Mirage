@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mirage</title>
+<style>
+:root{--bg:#0b0f17;--card:#121826;--card2:#182032;--line:#243049;--tx:#e6ebf5;--mut:#8b97b0;--acc:#5b8cff;--acc2:#22d3a6;--warn:#f5a524;--bad:#f0506e;--r:14px}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.6 Vazirmatn,"Segoe UI",Tahoma,system-ui,sans-serif}
+a{color:var(--acc)}button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:18px}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.logo{font-weight:800;font-size:20px;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+.logo i{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--acc2));box-shadow:0 0 14px var(--acc)}
+.badge{padding:2px 10px;border-radius:99px;background:var(--card2);border:1px solid var(--line);color:var(--mut);font-size:12px}
+.sp{flex:1}
+.btn{background:var(--card2);border:1px solid var(--line);padding:7px 14px;border-radius:10px;cursor:pointer;transition:.15s}
+.btn:hover{border-color:var(--acc)}.btn.p{background:var(--acc);border-color:var(--acc);color:#fff}.btn.d{color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:wait}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+nav button{background:none;border:1px solid transparent;padding:7px 14px;border-radius:10px;color:var(--mut);cursor:pointer}
+nav button.on{background:var(--card);border-color:var(--line);color:var(--tx)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.k{color:var(--mut);font-size:12px}.v{font-size:24px;font-weight:700;margin-top:4px;direction:ltr;text-align:right}
+.v small{font-size:12px;color:var(--mut);font-weight:400}
+h3{margin:0 0 12px;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--mut);font-weight:500}td.l{direction:ltr;text-align:left}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;background:var(--acc2)}
+.dot.w{background:var(--warn)}.dot.b{background:var(--bad)}
+.scroll{overflow-x:auto}
+canvas{width:100%;height:200px;display:block}
+input[type=text],input[type=password],input[type=number],select,textarea{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%;outline:none}
+input:focus,textarea:focus,select:focus{border-color:var(--acc)}
+textarea{min-height:420px;direction:ltr;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.row>*{flex:1}.row>.btn{flex:0 0 auto}
+.logs{background:#070a10;border-radius:10px;padding:12px;height:460px;overflow:auto;direction:ltr;font:12px/1.55 ui-monospace,Consolas,monospace;white-space:pre-wrap;color:#b9c4da}
+.login{max-width:360px;margin:12vh auto}
+.login .card{padding:26px}.login .row{flex-direction:column;align-items:stretch}
+.toast{position:fixed;bottom:18px;left:18px;background:var(--card2);border:1px solid var(--line);padding:10px 16px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;max-width:80vw}
+.toast.on{opacity:1}.toast.e{border-color:var(--bad)}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--mut);margin-top:6px}.legend b{display:inline-block;width:10px;height:3px;margin-left:6px;vertical-align:middle}
+.sw{position:relative;width:38px;height:22px;display:inline-block}.sw input{display:none}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:99px;cursor:pointer;transition:.2s}
+.sw span:after{content:"";position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s}
+.sw input:checked+span{background:var(--acc2)}.sw input:checked+span:after{right:19px}
+.mut{color:var(--mut)}.hide{display:none!important}
+.prof{display:flex;gap:6px}.prof button{flex:1}
+.hint{color:var(--mut);font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<div id="login" class="login hide"><div class="card">
+  <div class="logo" style="margin-bottom:18px"><i></i>Mirage</div>
+  <div class="row"><input id="lu" type="text" placeholder="نام کاربری" autocomplete="username"><input id="lp" type="password" placeholder="رمز عبور" autocomplete="current-password"></div>
+  <button class="btn p" style="width:100%" onclick="login()">ورود</button>
+</div></div>
+
+<div id="app" class="wrap hide">
+<header>
+  <div class="logo"><i></i>Mirage</div>
+  <span class="badge" id="role"></span><span class="badge" id="ver"></span>
+  <span class="sp"></span>
+  <button class="btn" onclick="reload()">اعمال مجدد</button>
+  <button class="btn d" onclick="logout()">خروج</button>
+</header>
+<nav id="nav">
+  <button data-t="dash" class="on">داشبورد</button>
+  <button data-t="links">لینک‌ها</button>
+  <button data-t="fwd" id="navfwd">فورواردها</button>
+  <button data-t="cfg">تنظیمات</button>
+  <button data-t="logs">لاگ</button>
+</nav>
+
+<section id="t-dash">
+  <div class="grid">
+    <div class="card"><div class="k">دانلود (ورودی تانل)</div><div class="v" id="sin">0</div></div>
+    <div class="card"><div class="k">آپلود (خروجی تانل)</div><div class="v" id="sout">0</div></div>
+    <div class="card"><div class="k">اتصال‌های فعال</div><div class="v" id="ssess">0</div></div>
+    <div class="card"><div class="k">بهترین پینگ تانل</div><div class="v" id="srtt">-</div></div>
+    <div class="card"><div class="k">رم / لود سرور</div><div class="v" id="smem">-</div></div>
+    <div class="card"><div class="k">آپتایم</div><div class="v" id="sup">-</div></div>
+  </div>
+  <div class="card" style="margin-bottom:12px">
+    <h3>ترافیک زنده</h3><canvas id="chart"></canvas>
+    <div class="legend"><span><b style="background:var(--acc2)"></b>دانلود</span><span><b style="background:var(--acc)"></b>آپلود</span><span id="peak"></span></div>
+  </div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+    <div class="card">
+      <h3>پروفایل</h3>
+      <div class="prof" id="prof">
+        <button class="btn" data-p="speed">⚡ سرعت</button>
+        <button class="btn" data-p="balanced">⚖ متعادل</button>
+        <button class="btn" data-p="stealth">🛡 استتار</button>
+      </div>
+      <div class="hint">سرعت: بدون padding و تشخیص سریع قطعی · متعادل: پیش‌فرض · استتار: padding کامل و الگوی ترافیک نامنظم‌تر</div>
+    </div>
+    <div class="card" id="spcard">
+      <h3>سرعت‌سنجی تانل</h3>
+      <div class="row"><button class="btn p" id="spbtn" onclick="speed()">شروع تست</button><div id="spres" class="mut">حدود ۱۲ ثانیه طول می‌کشد</div></div>
+    </div>
+    <div class="card"><h3>ورودی‌ها</h3><div id="fwdlist" class="mut l" style="direction:ltr;text-align:left"></div></div>
+  </div>
+</section>
+
+<section id="t-links" class="hide">
+  <div class="card" style="margin-bottom:12px"><h3>لینک‌ها</h3><div class="scroll"><table id="ltab"></table></div>
+  <div class="hint">لینک‌های «پشتیبان» فقط وقتی استفاده می‌شوند که هیچ لینک اصلی سالم نباشد. لینک‌هایی که این سرور روی آن‌ها listen می‌کند را سمت مقابل کنترل می‌کند.</div></div>
+  <div class="card"><h3>اتصال‌ها</h3><div class="scroll"><table id="stab"></table></div></div>
+</section>
+
+<section id="t-fwd" class="hide">
+  <div class="card" id="fwdcard">
+    <h3 id="fwdtitle">پورت فورواردها</h3>
+    <div id="fwdrows"></div>
+    <div class="row"><button class="btn" onclick="addFwd()">+ افزودن</button><span></span><button class="btn p" onclick="saveFwd()">ذخیره و اعمال</button></div>
+    <div class="hint" id="fwdhint"></div>
+  </div>
+</section>
+
+<section id="t-cfg" class="hide">
+  <div class="card" style="margin-bottom:12px" id="tokcard"><h3>توکن اتصال (برای سرور ایران)</h3>
+    <div class="row"><input id="tok" type="text" readonly style="direction:ltr"><button class="btn" onclick="copyTok()">کپی</button></div></div>
+  <div class="card"><h3>کانفیگ کامل (JSON)</h3>
+    <textarea id="cfgtxt" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px"><button class="btn" onclick="loadCfg()">بارگذاری مجدد</button><span></span><button class="btn p" onclick="saveCfg()">ذخیره و اعمال</button></div>
+    <div class="hint">قبل از اعمال، کانفیگ بررسی می‌شود؛ اگر اجرا نشود کانفیگ قبلی برمی‌گردد.</div>
+  </div>
+</section>
+
+<section id="t-logs" class="hide"><div class="card"><div class="logs" id="logs"></div></div></section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const B=location.pathname.replace(/\/?$/,'/')+'api/';
+let st=null,tab='dash',role='',timer=null;
+const $=id=>document.getElementById(id);
+function toast(m,e){const t=$('toast');t.textContent=m;t.className='toast on'+(e?' e':'');clearTimeout(t._h);t._h=setTimeout(()=>t.className='toast',3500)}
+async function api(p,o={}){o.headers=Object.assign({'X-Mirage':'1','Content-Type':'application/json'},o.headers||{});o.credentials='same-origin';
+  const r=await fetch(B+p,o);if(r.status===401){show(false);throw new Error('auth')}
+  const tx=await r.text();if(!r.ok)throw new Error(tx.trim()||r.statusText);try{return JSON.parse(tx)}catch(e){return tx}}
+function show(ok){$('login').classList.toggle('hide',ok);$('app').classList.toggle('hide',!ok);if(ok)start();else{clearInterval(timer)}}
+async function login(){try{await api('login',{method:'POST',body:JSON.stringify({User:$('lu').value,Pass:$('lp').value})});show(true)}catch(e){toast(e.message,1)}}
+$('lp').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+async function logout(){try{await api('logout',{method:'POST'})}catch(e){}show(false)}
+async function reload(){try{await api('reload',{method:'POST'});toast('اعمال شد')}catch(e){toast(e.message,1)}}
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('hide',s.id!=='t-'+tab));if(tab==='cfg')loadCfg();if(tab==='fwd')loadFwd();if(tab==='logs')logs();});
+document.querySelectorAll('#prof button').forEach(b=>b.onclick=async()=>{try{await api('profile',{method:'POST',body:JSON.stringify({Profile:b.dataset.p})});toast('پروفایل تغییر کرد');tick()}catch(e){toast(e.message,1)}});
+const mb=v=>v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2);
+const bytes=b=>{const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(i?1:0)+' '+u[i]};
+const dur=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+'d '+h+'h':h?h+'h '+m+'m':m+'m '+(s%60)+'s'};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function tick(){try{st=await api('status');render()}catch(e){}if(tab==='logs')logs()}
+function start(){tick();clearInterval(timer);timer=setInterval(tick,2000)}
+function render(){role=st.role;$('role').textContent=role==='iran'?'سرور ایران (ورودی)':'سرور خارج (خروجی)';$('ver').textContent='v'+st.version;
+  $('navfwd').textContent=role==='iran'?'فورواردها':'دسترسی محلی';$('spcard').classList.toggle('hide',role!=='iran');$('tokcard').classList.toggle('hide',role!=='kharej');
+  const h=st.history||[],last=h[h.length-1]||{in:0,out:0};
+  $('sin').innerHTML=mb(last.in)+' <small>Mbps</small>';$('sout').innerHTML=mb(last.out)+' <small>Mbps</small>';
+  const ss=st.sessions||[];$('ssess').textContent=ss.filter(s=>!s.draining).length;
+  const r=ss.map(s=>s.rtt_ms).filter(x=>x>0);$('srtt').innerHTML=r.length?Math.min(...r).toFixed(0)+' <small>ms</small>':'-';
+  $('smem').innerHTML=st.mem_mb.toFixed(0)+' <small>MB · '+esc(st.load||'')+'</small>';$('sup').textContent=dur(st.uptime_s);
+  document.querySelectorAll('#prof button').forEach(b=>b.classList.toggle('p',b.dataset.p===st.profile));
+  $('fwdlist').innerHTML=(st.forwards||[]).map(esc).join('<br>')||'<span class="mut">—</span>';
+  draw(h);
+  let lt='<tr><th>نام</th><th>نوع</th><th>پروتکل</th><th>وضعیت</th><th>فعال</th><th>پشتیبان</th><th>حداقل اتصال</th><th>آخرین خطا</th></tr>';
+  for(const l of st.links||[]){const up=l.up,want=l.want||0;const cls=l.disabled?'':(up===0?'b':(want&&up<want?'w':''));
+    const isDial=l.kind==='dial';const bk=!!l.backup;
+    lt+=`<tr><td class="l">${esc(l.name)}</td><td>${isDial?'اتصال‌دهنده':'شنونده'}</td><td class="l">${esc(l.transport)}</td><td>${l.disabled?'<span class="mut">خاموش</span>':`<span class="dot ${cls}"></span>${up}${want?'/'+want:''}`}</td>`+
+     (isDial?`<td><label class="sw"><input type="checkbox" ${l.disabled?'':'checked'} onchange="linkSet('${esc(l.name)}',{Disabled:!this.checked})"><span></span></label></td><td><label class="sw"><input type="checkbox" ${bk?'checked':''} onchange="linkSet('${esc(l.name)}',{Backup:this.checked})"><span></span></label></td><td><input type="number" min="1" max="64" value="${l.min||2}" style="width:70px" onchange="linkSet('${esc(l.name)}',{Conns:+this.value})"></td>`:'<td>—</td><td>—</td><td>—</td>')+
+     `<td class="l mut">${esc(l.last_error||'')}</td></tr>`}
+  $('ltab').innerHTML=lt;
+  let s2='<tr><th>لینک</th><th>آدرس</th><th>پینگ</th><th>استریم</th><th>عمر</th><th>دریافت</th><th>ارسال</th><th>حالت</th></tr>';
+  for(const s of ss){const rt=s.rtt_ms>0?s.rtt_ms.toFixed(0)+'ms':'-';s2+=`<tr><td class="l">${esc(s.link)}</td><td class="l">${esc(s.remote)}</td><td class="l">${rt}</td><td>${s.streams}</td><td class="l">${dur(s.age_s)}</td><td class="l">${bytes(s.bytes_in)}</td><td class="l">${bytes(s.bytes_out)}</td><td>${s.draining?'<span class="dot w"></span>در حال تعویض':'<span class="dot"></span>فعال'}${s.backup?' · پشتیبان':''}</td></tr>`}
+  if(!ss.length)s2+='<tr><td colspan="8" class="mut">هنوز اتصالی برقرار نشده</td></tr>';
+  $('stab').innerHTML=s2}
+function draw(h){const c=$('chart'),d=window.devicePixelRatio||1,w=c.clientWidth,ht=c.clientHeight;c.width=w*d;c.height=ht*d;const g=c.getContext('2d');g.scale(d,d);g.clearRect(0,0,w,ht);
+  const mx=Math.max(1,...h.map(p=>Math.max(p.in,p.out)))*1.15;$('peak').textContent='بیشینه: '+mb(mx/1.15)+' Mbps';
+  g.strokeStyle='#243049';g.lineWidth=1;for(let i=1;i<4;i++){const y=ht*i/4;g.beginPath();g.moveTo(0,y);g.lineTo(w,y);g.stroke()}
+  const N=180,line=(k,col)=>{if(h.length<2)return;g.beginPath();h.forEach((p,i)=>{const x=w-(h.length-1-i)*(w/(N-1)),y=ht-p[k]/mx*ht;i?g.lineTo(x,y):g.moveTo(x,y)});
+    g.strokeStyle=col;g.lineWidth=2;g.stroke();g.lineTo(w,ht);g.lineTo(w-(h.length-1)*(w/(N-1)),ht);g.closePath();g.globalAlpha=.08;g.fillStyle=col;g.fill();g.globalAlpha=1};
+  const cs=getComputedStyle(document.documentElement);line('in',cs.getPropertyValue('--acc2'));line('out',cs.getPropertyValue('--acc'))}
+async function linkSet(name,o){try{await api('link',{method:'POST',body:JSON.stringify(Object.assign({Name:name},o))});toast('اعمال شد');tick()}catch(e){toast(e.message,1);tick()}}
+async function speed(){const b=$('spbtn');b.disabled=true;$('spres').textContent='در حال تست…';
+  try{const r=await api('speedtest',{method:'POST'});$('spres').innerHTML=`⬇ <b>${mb(r.down_mbps)}</b> Mbps &nbsp; ⬆ <b>${mb(r.up_mbps)}</b> Mbps &nbsp; پینگ ${r.rtt_ms?r.rtt_ms.toFixed(0)+'ms':'-'}`}
+  catch(e){$('spres').textContent='خطا: '+e.message}b.disabled=false}
+let cfg=null;
+async function loadCfg(){try{cfg=await api('config');$('cfgtxt').value=JSON.stringify(cfg,null,2);if(cfg.role==='kharej'){const t=await api('token');$('tok').value=t.token||''}}catch(e){toast(e.message,1)}}
+async function saveCfg(){let c;try{c=JSON.parse($('cfgtxt').value)}catch(e){toast('JSON نامعتبر: '+e.message,1);return}
+  try{await api('config',{method:'PUT',body:JSON.stringify(c)});toast('ذخیره و اعمال شد');setTimeout(tick,800)}catch(e){toast(e.message,1)}}
+function copyTok(){const t=$('tok');t.select();navigator.clipboard?navigator.clipboard.writeText(t.value).then(()=>toast('کپی شد')):document.execCommand('copy')}
+async function logs(){try{const l=await api('logs');const el=$('logs'),bottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20;el.textContent=l.join('\n');if(bottom)el.scrollTop=el.scrollHeight}catch(e){}}
+// forwards (iran) / allow_local (kharej)
+function fwdRow(f){const d=document.createElement('div');d.className='row';
+  if(role==='iran'){d.innerHTML=`<select style="flex:0 0 110px"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP+UDP</option><option value="socks">SOCKS5</option></select><input type="text" placeholder="پورت ورودی (مثلا 443)" style="direction:ltr"><input type="text" placeholder="مقصد در سرور خارج (مثلا 2096)" style="direction:ltr"><button class="btn d" onclick="this.parentNode.remove()">حذف</button>`;
+    const [s,a,b]=d.querySelectorAll('select,input');s.value=f.proto||'tcp';a.value=f.listen||'';b.value=f.target||'';s.onchange=()=>{b.disabled=s.value==='socks';b.placeholder=s.value==='socks'?'—':'مقصد در سرور خارج (مثلا 2096)'};s.onchange()}
+  else{d.innerHTML=`<input type="text" placeholder="پورت یا آدرس محلی (مثلا 2096 یا 127.0.0.1:2096)" style="direction:ltr"><button class="btn d" onclick="this.parentNode.remove()">حذف</button>`;d.querySelector('input').value=f||''}
+  $('fwdrows').appendChild(d)}
+function addFwd(){fwdRow(role==='iran'?{proto:'tcp'}:'')}
+async function loadFwd(){try{cfg=await api('config')}catch(e){return}$('fwdrows').innerHTML='';
+  if(role==='iran'){$('fwdtitle').textContent='پورت فورواردها و SOCKS5';$('fwdhint').textContent='کاربر به «پورت ورودی» سرور ایران وصل می‌شود و ترافیک از تانل به «مقصد» در سرور خارج می‌رسد. عدد تنها یعنی 127.0.0.1:پورت روی سرور خارج (مثلا اینباند X-UI). SOCKS5 را برای outbound در X-UI ایران استفاده کنید.';
+    (cfg.forward||[]).forEach(f=>fwdRow(f));(cfg.socks||[]).forEach(s=>fwdRow({proto:'socks',listen:s.listen}))}
+  else{$('fwdtitle').textContent='سرویس‌های محلی مجاز';$('fwdhint').textContent='سرویس‌های روی خود سرور خارج (localhost/IP خصوصی) فقط وقتی از تانل قابل دسترسی‌اند که اینجا اضافه شوند. پورت پنل X-UI را اضافه نکنید.';(cfg.allow_local||[]).forEach(a=>fwdRow(a))}}
+const norm=(v,host)=>{v=v.trim();return /^\d+$/.test(v)?(host?host+':'+v:':'+v):v};
+async function saveFwd(){try{if(role==='iran'){const F=[],S=[];document.querySelectorAll('#fwdrows .row').forEach(r=>{const [s,a,b]=r.querySelectorAll('select,input');if(!a.value.trim())return;
+      if(s.value==='socks'){S.push({listen:norm(a.value,'127.0.0.1')})}else F.push({proto:s.value,listen:norm(a.value),target:norm(b.value,'127.0.0.1')})});
+    await api('forwards',{method:'PUT',body:JSON.stringify({Forward:F,Socks:S})})}
+  else{const A=[];document.querySelectorAll('#fwdrows input').forEach(i=>{if(i.value.trim())A.push(i.value.trim())});await api('allow',{method:'PUT',body:JSON.stringify({AllowLocal:A})})}
+  toast('ذخیره و اعمال شد');loadFwd();tick()}catch(e){toast(e.message,1)}}
+window.addEventListener('resize',()=>st&&draw(st.history||[]));
+(async()=>{try{await api('status');show(true)}catch(e){show(false)}})();
+</script>
+</body>
+</html>
