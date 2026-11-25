@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/huh"
 )
 
 const releaseURL = "https://github.com/hope-s/Mirage/releases/latest/download/"
@@ -224,27 +226,39 @@ func restoreBackup(file, dst string) error {
 }
 
 func backupMenu() error {
-	fmt.Println(`
-  1) Create a backup now
-  2) Restore from a backup file
-  0) Back`)
-	switch ask("\nchoose", "") {
-	case "1":
-		return cmdBackup(nil)
-	case "2":
-		files, _ := filepath.Glob(filepath.Join(backupDir(), "mirage-backup-*.tar.gz"))
-		def := ""
-		if len(files) > 0 {
-			def = files[len(files)-1]
-		}
-		p := ask("backup file", def)
-		if p == "" {
-			return nil
-		}
-		if !askYN(cYel+"replace the current settings with "+p+"?"+cReset, false) {
-			return nil
-		}
-		return cmdRestore([]string{p})
+	act := "backup"
+	files, _ := filepath.Glob(filepath.Join(backupDir(), "mirage-backup-*.tar.gz"))
+	err := form(huh.NewGroup(huh.NewSelect[string]().Title("Backup / restore").Options(
+		huh.NewOption("Create a backup now", "backup"),
+		huh.NewOption("Restore from a backup file", "restore"),
+		huh.NewOption("Back", "back"),
+	).Value(&act))).Run()
+	if err != nil || act == "back" {
+		return errCancelled
 	}
-	return nil
+	if act == "backup" {
+		return cmdBackup(nil)
+	}
+	p := ""
+	if len(files) > 0 {
+		p = files[len(files)-1]
+	}
+	var opts []huh.Option[string]
+	for i := len(files) - 1; i >= 0; i-- {
+		opts = append(opts, huh.NewOption(filepath.Base(files[i]), files[i]))
+	}
+	opts = append(opts, huh.NewOption("another file…", "other"))
+	if form(huh.NewGroup(huh.NewSelect[string]().Title("Restore which backup?").Options(opts...).Value(&p))).Run() != nil {
+		return errCancelled
+	}
+	if p == "other" || p == "" {
+		p = ""
+		if form(huh.NewGroup(huh.NewInput().Title("Path to the backup file").Value(&p))).Run() != nil || p == "" {
+			return errCancelled
+		}
+	}
+	if !confirm("Replace the current settings with "+filepath.Base(p)+"?", "The current settings are kept next to them as a copy.", false) {
+		return errCancelled
+	}
+	return cmdRestore([]string{p})
 }

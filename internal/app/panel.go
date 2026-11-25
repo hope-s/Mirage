@@ -14,12 +14,12 @@ import (
 	"net"
 	"net/http"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"mirage/internal/node"
+	"mirage/internal/setup"
 	"mirage/internal/transport"
 )
 
@@ -424,7 +424,7 @@ func (p *panel) api(w http.ResponseWriter, r *http.Request, api, base string) {
 					o.Mode = *req.KCPMode
 				}
 				if req.FEC != nil {
-					d, pp, err := parseFEC(*req.FEC)
+					d, pp, err := setup.ParseFEC(*req.FEC)
 					if err != nil {
 						return err
 					}
@@ -499,6 +499,43 @@ func (p *panel) api(w http.ResponseWriter, r *http.Request, api, base string) {
 			c.AllowLocal = req.AllowLocal
 			return nil
 		})
+	case api == "setup/defaults" && r.Method == http.MethodGet:
+		writeJSON(w, p.a.SetupDefaults())
+	case api == "setup/kharej" && r.Method == http.MethodPost:
+		var req KharejRequest
+		if err := readJSON(r, &req); err != nil {
+			fail(err, 400)
+			return
+		}
+		res, err := p.a.SetupKharej(req)
+		if err != nil {
+			fail(err, 400)
+			return
+		}
+		writeJSON(w, res)
+	case api == "setup/iran" && r.Method == http.MethodPost:
+		var req IranRequest
+		if err := readJSON(r, &req); err != nil {
+			fail(err, 400)
+			return
+		}
+		res, err := p.a.SetupIran(req)
+		if err != nil {
+			fail(err, 400)
+			return
+		}
+		writeJSON(w, res)
+	case api == "tunnel/remove" && r.Method == http.MethodPost:
+		var req struct{ Name string }
+		if err := readJSON(r, &req); err != nil {
+			fail(err, 400)
+			return
+		}
+		if err := p.a.RemoveTunnel(req.Name); err != nil {
+			fail(err, 400)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
 	case api == "token" && r.Method == http.MethodGet:
 		_, cfg, _ := p.a.Tunnel(tn)
 		if cfg == nil {
@@ -509,21 +546,6 @@ func (p *panel) api(w http.ResponseWriter, r *http.Request, api, base string) {
 	default:
 		http.NotFound(w, r)
 	}
-}
-
-// parseFEC parses "10:3" (data:parity); "0", "off" or "" disables FEC.
-func parseFEC(s string) (int, int, error) {
-	s = strings.TrimSpace(s)
-	if s == "" || s == "0" || s == "off" {
-		return 0, 0, nil
-	}
-	a, b, ok := strings.Cut(s, ":")
-	d, err1 := strconv.Atoi(a)
-	p, err2 := strconv.Atoi(b)
-	if !ok || err1 != nil || err2 != nil || d < 1 || p < 1 {
-		return 0, 0, errors.New("FEC must look like 10:3 (data:parity) or 0")
-	}
-	return d, p, nil
 }
 
 // editConfig copies a tunnel's config, applies fn, then saves and reloads.

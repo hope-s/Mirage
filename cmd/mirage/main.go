@@ -16,16 +16,17 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"text/tabwriter"
 	"time"
 
 	"mirage/internal/app"
 	"mirage/internal/node"
+	"mirage/internal/setup"
 )
 
-const version = "2.0.1"
+const version = "2.1.0"
 
-const defaultConfig = "/etc/mirage/config.json"
+// defaultConfig is the main tunnel's file; MIRAGE_CONFIG overrides it.
+var defaultConfig = orDefault(os.Getenv("MIRAGE_CONFIG"), "/etc/mirage/config.json")
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `Mirage %s - multi-transport self-healing tunnel
@@ -220,7 +221,7 @@ func cmdPanel(args []string) error {
 			cfg.Panel.TLS = *toHTTPS
 		}
 		if *newPass {
-			cfg.Panel.Pass = randHex(8)
+			cfg.Panel.Pass = setup.RandHex(8)
 		}
 		if err := cfg.Save(*cfgPath); err != nil {
 			return err
@@ -228,7 +229,7 @@ func cmdPanel(args []string) error {
 		if err := reloadRunning(*cfgPath); err != nil {
 			fmt.Println("saved; restart the service to apply:", err)
 		} else {
-			fmt.Println("✓ applied")
+			fmt.Println(sOK.Render("✓ applied"))
 		}
 	}
 	printPanel(cfg, "")
@@ -283,84 +284,17 @@ func cmdStatus(args []string) error {
 	cfgPath := configFlag(fs)
 	asJSON := fs.Bool("json", false, "raw JSON output")
 	_ = fs.Parse(args)
-	u, err := statusURL(*cfgPath)
-	if err != nil {
-		return err
-	}
-	cl := http.Client{Timeout: 5 * time.Second}
-	resp, err := cl.Get(u + "/")
-	if err != nil {
-		return fmt.Errorf("service not reachable - is it running? (mirage logs) %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	st, err := fetchStatus(*cfgPath)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
-		fmt.Println(string(body))
+		b, _ := json.MarshalIndent(st, "", "  ")
+		fmt.Println(string(b))
 		return nil
 	}
-	var st app.StatusData
-	if err := json.Unmarshal(body, &st); err != nil {
-		return err
-	}
-	var in, out float64
-	if h := st.History; len(h) > 0 {
-		in, out = h[len(h)-1].In, h[len(h)-1].Out
-	}
-	fmt.Printf("Mirage %s  role=%s  profile=%s  up=%s  mem=%.0fMB  traffic: in %.2f / out %.2f Mbps\n\n",
-		st.Version, st.Role, st.Profile, (time.Duration(st.UptimeS) * time.Second).String(), st.MemMB, in, out)
-	tunnels := st.Tunnels
-	if len(tunnels) == 0 {
-		tunnels = []app.TunnelStatus{{Name: app.MainTunnel, Status: st.Status}}
-	}
-	for _, t := range tunnels {
-		if len(tunnels) > 1 {
-			fmt.Printf("%s== tunnel %s (%s, %s) ==%s\n", cBold, t.Name, t.Role, t.Profile, cReset)
-		}
-		printTunnel(t.Status)
-		fmt.Println()
-	}
+	fmt.Println(renderStatus(st, termWidth()))
 	return nil
-}
-
-func printTunnel(st node.Status) {
-	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "LINK\tKIND\tTRANSPORT\tUP\tNOTE")
-	for _, l := range st.Links {
-		up := strconv.Itoa(int(l.Up))
-		if l.Want > 0 {
-			up += "/" + strconv.Itoa(l.Want)
-		}
-		note := l.LastError
-		if l.Disabled {
-			note = "disabled"
-		} else if l.Backup && note == "" {
-			note = "backup"
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", l.Name, l.Kind, l.Transport, up, note)
-	}
-	tw.Flush()
-	fmt.Println()
-	tw = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "LINK\tREMOTE\tRTT\tCIPHER\tSTREAMS\tAGE\tIN\tOUT\tSTATE")
-	for _, s := range st.Sessions {
-		state := "active"
-		if s.Draining {
-			state = "draining"
-		}
-		rtt := "-"
-		if s.RTTms > 0 {
-			rtt = fmt.Sprintf("%.0fms", s.RTTms)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", s.Link, s.Remote, rtt, s.Cipher, s.Streams,
-			(time.Duration(s.AgeSec) * time.Second).String(), human(s.BytesIn), human(s.BytesOut), state)
-	}
-	tw.Flush()
-	if len(st.Sessions) == 0 {
-		fmt.Println("(no live connections yet)")
-	}
 }
 
 func cmdSpeedtest(args []string) error {
@@ -369,25 +303,13 @@ func cmdSpeedtest(args []string) error {
 	secs := fs.Int("t", 6, "seconds per direction")
 	tunnel := fs.String("tunnel", "", "tunnel to test (default: main)")
 	_ = fs.Parse(args)
-	u, err := statusURL(*cfgPath)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("testing download and upload through the tunnel (%ds each)...\n", *secs)
-	cl := http.Client{Timeout: time.Duration(*secs*2+30) * time.Second}
-	resp, err := cl.Post(u+"/speedtest?d="+strconv.Itoa(*secs)+"&tunnel="+url.QueryEscape(*tunnel), "application/json", nil)
-	if err != nil {
-		return fmt.Errorf("service not reachable: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return errors.New(string(body))
-	}
 	var r node.SpeedResult
-	if err := json.Unmarshal(body, &r); err != nil {
+	err := spin(fmt.Sprintf("testing download and upload through the tunnel (%ds each)", *secs), func() error {
+		return postStatus(*cfgPath, "/speedtest?d="+strconv.Itoa(*secs)+"&tunnel="+url.QueryEscape(*tunnel), time.Duration(*secs*2+30)*time.Second, &r)
+	})
+	if err != nil {
 		return err
 	}
-	fmt.Printf("download: %.1f Mbps\nupload:   %.1f Mbps\nping:     %.0f ms\n", r.DownMbps, r.UpMbps, r.RTTms)
+	fmt.Println(renderSpeed(r))
 	return nil
 }

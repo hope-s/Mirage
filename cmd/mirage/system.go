@@ -59,7 +59,8 @@ fs.file-max = 2097152
 `
 
 func needRoot() error {
-	if os.Geteuid() != 0 {
+	// MIRAGE_CONFIG points at a config outside /etc (testing, containers)
+	if os.Geteuid() != 0 && os.Getenv("MIRAGE_CONFIG") == "" {
 		return errors.New("run this as root (sudo)")
 	}
 	return nil

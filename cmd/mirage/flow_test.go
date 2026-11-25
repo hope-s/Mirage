@@ -313,28 +313,6 @@ func roundTrip(t *testing.T, a string) {
 	}
 }
 
-func TestTokenRoundTripAndForwardParsing(t *testing.T) {
-	tk := token{V: 1, Key: strings.Repeat("ab", 32), Links: []tokenLink{{Name: "tls", T: "tls", Mode: "d", Addrs: []string{"1.2.3.4:443"}}}}
-	s, err := encodeToken(tk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// pasted with line breaks / spaces
-	broken := s[:20] + "\n  " + s[20:]
-	got, err := decodeToken(broken)
-	if err != nil || got.Links[0].Addrs[0] != "1.2.3.4:443" {
-		t.Fatalf("decode: %v", err)
-	}
-	if _, err := decodeToken("garbage"); err == nil {
-		t.Fatal("garbage accepted")
-	}
-	f := parseForwards("443=2096, 8443 ,9000=10.0.0.2:80", "tcp")
-	want := []node.ForwardConf{{Proto: "tcp", Listen: ":443", Target: "127.0.0.1:2096"}, {Proto: "tcp", Listen: ":8443", Target: "127.0.0.1:8443"}, {Proto: "tcp", Listen: ":9000", Target: "10.0.0.2:80"}}
-	if fmt.Sprint(f) != fmt.Sprint(want) {
-		t.Fatalf("forwards: %v", f)
-	}
-}
-
 // TestReverseCDNSetup: in reverse mode the CDN domain points at iran, so
 // kharej dials the CDN and iran listens on the origin port.
 func TestReverseCDNSetup(t *testing.T) {
@@ -446,4 +424,66 @@ func TestMultiTunnel(t *testing.T) {
 		t.Fatal("removed tunnel's forward still listening")
 	}
 	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwdMain))
+}
+
+// TestPanelSetupTunnels creates a kharej and an iran tunnel the way the
+// panel wizard does, sends data through them, then removes them.
+func TestPanelSetupTunnels(t *testing.T) {
+	quietStdout(t)
+	dir := t.TempDir()
+	main := filepath.Join(dir, "config.json")
+	echo := echoSrv(t)
+	if err := cmdSetupKharej([]string{"-c", main, "-ip", "127.0.0.1", "-tls", "", "-tcp", strconv.Itoa(freeP(t)),
+		"-status", "127.0.0.1:" + strconv.Itoa(freeP(t))}); err != nil {
+		t.Fatal(err)
+	}
+	a := app.New(main)
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	kres, err := a.SetupKharej(app.KharejRequest{Name: "kx", IP: "127.0.0.1", TCP: strconv.Itoa(freeP(t)),
+		AllowLocal: strconv.Itoa(echo), Profile: "speed", Cipher: "auto", Fingerprint: "chrome"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetupKharej(app.KharejRequest{Name: "kx", IP: "127.0.0.1", TCP: strconv.Itoa(freeP(t))}); err == nil {
+		t.Fatal("an existing tunnel was replaced without Replace")
+	}
+	fwd := freeP(t)
+	if _, err := a.SetupIran(app.IranRequest{Name: "ix", Token: kres.Token, Forward: fmt.Sprintf("%d=%d", fwd, echo)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(app.TunnelsDir(main), "ix.json")); err != nil {
+		t.Fatal("iran tunnel file not saved:", err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	up := func() bool {
+		for _, ts := range a.StatusData().Tunnels {
+			if ts.Name == "ix" && len(ts.Sessions) > 0 {
+				return true
+			}
+		}
+		return false
+	}
+	for time.Now().Before(deadline) && !up() {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !up() {
+		t.Fatalf("panel-made tunnel did not connect: %+v", a.StatusData().Tunnels)
+	}
+	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwd))
+
+	if err := a.RemoveTunnel(app.MainTunnel); err == nil {
+		t.Fatal("main tunnel removed")
+	}
+	for _, n := range []string{"ix", "kx"} {
+		if err := a.RemoveTunnel(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if names := a.TunnelNames(); len(names) != 1 {
+		t.Fatalf("tunnels left: %v", names)
+	}
 }

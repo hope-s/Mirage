@@ -82,7 +82,7 @@ canvas{width:100%;height:100%;display:block}
 .seg{display:inline-flex;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px;flex-wrap:wrap}
 .seg button{border:0;background:none;padding:6px 14px;border-radius:9px;cursor:pointer;color:var(--mut)}
 .seg button.on{background:var(--card);color:var(--tx);box-shadow:var(--shadow);font-weight:600}
-.field{display:grid;gap:6px;margin-bottom:12px}
+.field{display:grid;gap:6px;margin-bottom:12px;align-content:start}
 .field label{font-size:12.5px;color:var(--mut)}
 .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 14px}
 .note{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:10px 12px;font-size:12.5px}
@@ -110,7 +110,26 @@ textarea.code{width:100%;min-height:380px;font:12.5px/1.6 ui-monospace,SFMono-Re
 .switch span:before{content:"";position:absolute;width:16px;height:16px;top:3px;right:3px;background:#fff;border-radius:50%;transition:.2s}
 .switch input:checked+span{background:var(--ok)}
 .switch input:checked+span:before{transform:translateX(-16px)}
-@media (max-width:640px){.stat .v{font-size:22px}.wrap{padding:12px}.card{padding:14px}}
+/* tunnel wizard */
+.steps{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:14px;font-size:12.5px;color:var(--mut)}
+.steps b{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--bg2);border:1px solid var(--line);font-size:11.5px;margin-inline-end:4px}
+.steps .on{color:var(--tx);font-weight:600}.steps .on b{background:var(--acc);border-color:var(--acc);color:#fff}
+.steps .done b{background:var(--ok);border-color:var(--ok);color:#fff}
+.steps i{flex:none;width:18px;height:1px;background:var(--line)}
+.pick{display:grid;gap:4px;text-align:start;background:var(--bg2);border:1.5px solid var(--line);border-radius:14px;padding:16px;cursor:pointer;transition:.15s}
+.pick:hover{border-color:var(--acc);background:var(--acc-soft)}
+.pick b{font-size:16px}.pick span{color:var(--mut);font-size:12.5px}
+.pick .ic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;color:#fff;font-size:17px;margin-bottom:4px}
+.trs{display:grid;gap:8px}
+.tr{display:grid;grid-template-columns:auto 1fr 120px;gap:12px;align-items:center;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;transition:.15s}
+.tr.off{opacity:.6}.tr.off input[type=text]{visibility:hidden}
+.tr b{font-size:13.5px}.tr input[type=text]{width:100%}
+.wsec{margin:18px 0 8px;font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px}
+.wsec:after{content:"";flex:1;height:1px;background:var(--line)}
+.okmark{width:46px;height:46px;border-radius:50%;background:var(--ok-soft);color:var(--ok);display:grid;place-items:center;font-size:24px}
+.notes{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.notes li{background:var(--warn-soft);color:var(--warn);border-radius:11px;padding:8px 12px;font-size:13px}
+@media (max-width:640px){.stat .v{font-size:22px}.wrap{padding:12px}.card{padding:14px}.tr{grid-template-columns:auto 1fr}.tr input[type=text]{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -142,6 +161,7 @@ textarea.code{width:100%;min-height:380px;font:12.5px/1.6 ui-monospace,SFMono-Re
     <nav class="tabs" id="tabs">
       <button data-t="dash" class="on">داشبورد</button>
       <button data-t="links">لینک‌ها و اتصال‌ها</button>
+      <button data-t="tun">تانل‌ها</button>
       <button data-t="tools">ابزارها</button>
       <button data-t="settings">تنظیمات</button>
       <button data-t="logs">لاگ‌ها</button>
@@ -188,6 +208,97 @@ textarea.code{width:100%;min-height:380px;font:12.5px/1.6 ui-monospace,SFMono-Re
           <thead><tr><th>لینک</th><th>آدرس مقابل</th><th>پینگ</th><th>رمزنگاری</th><th>استریم</th><th>عمر</th><th>دریافت</th><th>ارسال</th><th>وضعیت</th></tr></thead>
           <tbody id="sessRows"></tbody>
         </table></div>
+      </div>
+    </section>
+
+    <!-- tunnels -->
+    <section id="tun">
+      <div class="card">
+        <div class="row"><h3 style="margin:0">تانل‌های این سرور</h3><div class="sp"></div><button class="btn p" id="newTunBtn">+ ساخت تانل</button></div>
+        <p class="sub" style="margin-top:4px">هر تانل کلید و پورت‌های خودش را دارد و همه داخل یک سرویس اجرا می‌شوند. با چند تانل می‌توانید این سرور را به چند سرور دیگر وصل کنید.</p>
+        <div class="tw"><table>
+          <thead><tr><th>تانل</th><th>نقش</th><th>لینک‌ها</th><th>وضعیت</th><th>ورودی‌ها</th><th></th></tr></thead>
+          <tbody id="tunList"></tbody>
+        </table></div>
+      </div>
+
+      <div class="card mt" id="wiz" hidden>
+        <div class="row"><h3 style="margin:0">ساخت تانل</h3><div class="sp"></div><button class="btn sm" id="wClose">بستن</button></div>
+        <div class="steps mt" id="wSteps"><span data-s="1"><b>۱</b>نقش سرور</span><i></i><span data-s="2"><b>۲</b>تنظیمات</span><i></i><span data-s="3"><b>۳</b>نتیجه</span></div>
+
+        <div id="wRole">
+          <div class="grid g2">
+            <button class="pick" data-role="kharej"><span class="ic" style="background:linear-gradient(135deg,#f59e0b,#ef4444)">⇱</span><b>این سرور «خارج» است</b><span>سرور مقصد که X-UI روی آن است. یک توکن می‌سازد که در سرور ایران وارد می‌کنید.</span></button>
+            <button class="pick" data-role="iran"><span class="ic" style="background:linear-gradient(135deg,var(--acc),var(--ok))">⇲</span><b>این سرور «ایران» است</b><span>سرور ورودی کاربران. توکن سرور خارج را می‌گیرد و پورت‌ها را فوروارد می‌کند.</span></button>
+          </div>
+          <p class="sm mut mt">ترتیب درست: اول روی سرور خارج تانل بسازید، بعد توکنش را در پنل سرور ایران وارد کنید.</p>
+        </div>
+
+        <form id="wK" hidden autocomplete="off">
+          <div class="fields">
+            <div class="field"><label>نام تانل</label><input type="text" class="ltr wname" placeholder="de2"><div class="sm mut">حروف کوچک انگلیسی، عدد و -. اگر نام یک تانل موجود (مثل main) را بدهید، جایگزین می‌شود.</div></div>
+            <div class="field"><label>جهت اتصال</label>
+              <div class="seg" id="kMode"><button type="button" data-v="direct" class="on">مستقیم: ایران ← خارج</button><button type="button" data-v="reverse">معکوس: خارج ← ایران</button></div>
+              <div class="sm mut">معکوس فقط وقتی که سرور ایران نمی‌تواند به خارج وصل شود.</div></div>
+            <div class="field" id="kIPf"><label>IP عمومی همین سرور</label><input type="text" id="kIP" class="ltr"></div>
+            <div class="field" id="kRevf" hidden><label>IP سرور ایران</label><input type="text" id="kRev" class="ltr" placeholder="1.2.3.4"></div>
+          </div>
+
+          <div class="wsec">پروتکل‌ها</div>
+          <p class="sm mut" style="margin:0 0 10px">چند تا را روشن کنید؛ Mirage همه را آماده نگه می‌دارد و خودکار روی بهترین می‌رود.</p>
+          <div class="trs" id="kTrs">
+            <div class="tr" data-k="tls"><label class="switch"><input type="checkbox" checked><span></span></label><div><b>TLS</b><div class="sm mut">شبیه HTTPS معمولی، سخت برای شناسایی</div></div><input type="text" class="ltr" placeholder="پورت"></div>
+            <div class="tr" data-k="tcp"><label class="switch"><input type="checkbox" checked><span></span></label><div><b>TCP</b><div class="sm mut">سریع‌ترین، کمترین مصرف CPU</div></div><input type="text" class="ltr" placeholder="پورت"></div>
+            <div class="tr off" data-k="kcp"><label class="switch"><input type="checkbox"><span></span></label><div><b>KCP (UDP)</b><div class="sm mut">بهترین برای پکت‌لاست بالا</div></div><input type="text" class="ltr" placeholder="پورت"></div>
+            <div class="tr off" data-k="ftcp"><label class="switch"><input type="checkbox"><span></span></label><div><b>Fake-TCP</b><div class="sm mut">KCP با ظاهر TCP، وقتی UDP بسته است (لینوکس، root)</div></div><input type="text" class="ltr" placeholder="پورت"></div>
+            <div class="tr off" data-k="ws"><label class="switch"><input type="checkbox"><span></span></label><div><b>WebSocket</b><div class="sm mut">از فیلترهای بیشتری رد می‌شود (پشتیبان)</div></div><input type="text" class="ltr" placeholder="پورت"></div>
+          </div>
+          <div class="fields mt" id="kKcp" hidden>
+            <div class="field"><label>سرعت KCP</label><select id="kKmode" class="ltr"><option>normal</option><option>fast</option><option selected>fast2</option><option>fast3</option><option>turbo</option></select></div>
+            <div class="field"><label>تصحیح خطا (FEC)</label><select id="kFec"><option value="0">خاموش</option><option value="10:3" selected>سبک 10:3 (پیشنهادی)</option><option value="10:5">متوسط 10:5 (لاست ۱۰-۲۰٪)</option><option value="5:5">سنگین 5:5 (لاست بالای ۲۰٪)</option></select></div>
+          </div>
+
+          <div class="wsec">مسیر پشتیبان Cloudflare (اختیاری)</div>
+          <div class="field"><label>دامنه‌ی CDN</label><input type="text" id="kCdn" class="ltr" placeholder="cdn.example.com">
+            <div class="sm mut" id="kCdnHint">ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند. با SSL حالت Flexible یا Full کار می‌کند (پورت 80 و 443).</div></div>
+
+          <div class="wsec">سرویس‌ها و امنیت</div>
+          <div class="fields">
+            <div class="field"><label>پورت اینباندهای X-UI روی این سرور</label><input type="text" id="kAllow" class="ltr" placeholder="2096,2097"><div class="sm mut">سرور ایران فقط به این پورت‌ها می‌تواند فوروارد کند.</div></div>
+            <div class="field"><label>پروفایل</label><select id="kProf"><option value="balanced">⚖ متعادل (پیشنهادی)</option><option value="speed">⚡ سرعت</option><option value="stealth">🛡 استتار</option></select></div>
+            <div class="field"><label>رمزنگاری</label><select id="kCipher"><option value="auto">خودکار</option><option value="aes-256-gcm">AES-256-GCM</option><option value="chacha20-poly1305">ChaCha20-Poly1305</option></select></div>
+            <div class="field"><label>اثر انگشت TLS</label><select id="kFP" class="ltr"><option>chrome</option><option>firefox</option><option>safari</option><option>edge</option><option>ios</option><option>random</option><option>go</option></select></div>
+            <div class="field"><label>رفرش خودکار</label><select id="kRefresh"><option value="0">خاموش</option><option value="1">هر ساعت</option><option value="6">هر ۶ ساعت</option><option value="12">هر ۱۲ ساعت</option><option value="24">روزانه</option></select></div>
+          </div>
+          <div class="err" id="kErr"></div>
+          <div class="row"><button type="button" class="btn" data-back>→ برگشت</button><div class="sp"></div><button class="btn p">ساخت تانل و گرفتن توکن</button></div>
+        </form>
+
+        <form id="wI" hidden autocomplete="off">
+          <div class="fields">
+            <div class="field"><label>نام تانل</label><input type="text" class="ltr wname" placeholder="de2"><div class="sm mut">اگر نام یک تانل موجود (مثل main) را بدهید، جایگزین می‌شود.</div></div>
+          </div>
+          <div class="field"><label>توکن اتصال از سرور خارج</label><textarea id="iTok" class="tok" rows="4" placeholder="MRG1...." spellcheck="false"></textarea></div>
+          <div class="wsec">ورودی کاربران</div>
+          <div class="fields">
+            <div class="field"><label>فوروارد پورت (ایران=خارج)</label><input type="text" id="iFwd" class="ltr" placeholder="443=2096,8443=2097"><div class="sm mut">یک عدد تنها یعنی همان پورت در هر دو طرف.</div></div>
+            <div class="field"><label>SOCKS5 برای outbound در X-UI (اختیاری)</label><input type="text" id="iSocks" class="ltr" placeholder="40001"></div>
+          </div>
+          <label class="row sm"><span class="switch"><input type="checkbox" id="iUdp"><span></span></label>UDP را هم روی همین پورت‌ها فوروارد کن</label>
+          <div class="err mt" id="iErr"></div>
+          <div class="row"><button type="button" class="btn" data-back>→ برگشت</button><div class="sp"></div><button class="btn p">ساخت تانل</button></div>
+        </form>
+
+        <div id="wDone" hidden>
+          <div class="row"><div class="okmark">✓</div><div><h3 style="margin:0" id="dTitle">تانل ساخته شد</h3><div class="sm mut" id="dSub"></div></div></div>
+          <div id="dTokBox" class="mt" hidden>
+            <div class="sm mut" style="margin-bottom:6px">این توکن را در پنل یا منوی سرور ایران وارد کنید:</div>
+            <div class="tok" id="dTok"></div>
+            <div class="row mt"><button class="btn sm p" id="dCopy">کپی توکن</button></div>
+          </div>
+          <ul class="notes mt" id="dNotes"></ul>
+          <div class="row mt"><div class="sp"></div><button class="btn" id="dOk">تمام</button></div>
+        </div>
       </div>
     </section>
 
@@ -342,7 +453,7 @@ $("#themeBtn").onclick=()=>{const d=document.documentElement;const dark=d.datase
 
 /* ---------- tabs ---------- */
 function setTab(t){TAB=t;$$("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t===t));$$("section").forEach(s=>s.classList.toggle("on",s.id===t));try{localStorage.setItem("mirage_tab",t)}catch(e){}
-  if(t==="logs")loadLogs();if(t==="settings")loadSettings();if(t==="tools")loadCDN()}
+  if(t==="logs")loadLogs();if(t==="settings")loadSettings();if(t==="tools")loadCDN();if(t==="tun")renderTunList()}
 $$("#tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.t));
 $("#tunnelSel").onchange=e=>{CUR=e.target.value;render();if(TAB==="settings")loadSettings();if(TAB==="tools")loadCDN()};
 
@@ -385,7 +496,7 @@ function render(){
     return `<tr><td><span class="row"><i class="dot ${st}"></i><b>${esc(x.name)}</b></span></td><td>${roleFa(x.role)}</td><td>${profFa[x.profile]||esc(x.profile)}</td>
       <td class="ltr">${lu}/${ls.length}</td><td class="ltr">${(x.sessions||[]).length}</td><td class="ltr">${isFinite(best)?best.toFixed(0)+" ms":"-"}</td>
       <td class="ltr sm">${(x.forwards||[]).map(esc).join("<br>")||"-"}</td></tr>`}).join("")||`<tr><td colspan="7" class="empty">تانلی نیست</td></tr>`;
-  renderLinks(t);draw();
+  renderLinks(t);draw();if(TAB==="tun")renderTunList();
 }
 function renderLinks(t){
   let kcp=false;
@@ -537,6 +648,85 @@ $("#cfgSave").onclick=e=>busy(e.currentTarget,async()=>{
   let c;try{c=JSON.parse($("#cfgText").value)}catch(err){throw new Error("JSON نامعتبر: "+err.message)}
   await api("PUT","config",c);CFGCACHE={};toast("کانفیگ اعمال شد");refresh();
 });
+
+/* ---------- tunnels & wizard ---------- */
+function renderTunList(){
+  const ts=ST?.tunnels||[];
+  $("#tunList").innerHTML=ts.map(x=>{
+    const ls=(x.links||[]).filter(l=>!l.disabled),lu=ls.filter(l=>l.up>0).length;
+    const st=!x.running?'<span class="chip bad">متوقف</span>':lu===0?'<span class="chip bad">قطع</span>':lu<ls.length?'<span class="chip warn">ناقص</span>':'<span class="chip ok">وصل</span>';
+    return `<tr><td><b class="ltr">${esc(x.name)}</b></td><td>${roleFa(x.role)}</td><td class="ltr sm">${[...new Set((x.links||[]).map(l=>l.transport))].join(" · ")}</td>
+      <td>${st} <span class="ltr sm mut">${lu}/${ls.length}</span></td><td class="ltr sm">${(x.forwards||[]).map(esc).join("<br>")||"-"}</td>
+      <td>${x.name==="main"?"":`<button class="btn sm d" data-rm="${esc(x.name)}">حذف</button>`}</td></tr>`}).join("");
+}
+$("#tunList").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-rm]");if(!b)return;const n=b.dataset.rm;
+  if(!confirm("تانل «"+n+"» حذف شود؟ تنظیماتش پاک و پورت‌هایش بسته می‌شود."))return;
+  await busy(b,async()=>{await api("POST","tunnel/remove",{Name:n},false);if(CUR===n)CUR="main";toast("تانل حذف شد");await refresh();renderTunList()});
+});
+let DEF=null,WROLE="";
+function wStep(n){$$("#wSteps span").forEach(s=>{const k=+s.dataset.s;s.className=k===n?"on":k<n?"done":""})}
+function wShow(id){["wRole","wK","wI","wDone"].forEach(x=>$("#"+x).hidden=x!==id)}
+function suggestName(){const have=new Set(ST?.tunnels?.map(t=>t.name)||[]);for(let i=2;;i++){const n="t"+i;if(!have.has(n))return n}}
+$("#newTunBtn").onclick=async()=>{
+  $("#wiz").hidden=false;wShow("wRole");wStep(1);$("#wiz").scrollIntoView({behavior:"smooth",block:"start"});
+  try{DEF=await api("GET","setup/defaults",null,false)}catch(e){DEF={}}
+};
+$("#wClose").onclick=()=>{$("#wiz").hidden=true};
+$$("#wiz [data-back]").forEach(b=>b.onclick=()=>{wShow("wRole");wStep(1)});
+$$(".pick").forEach(b=>b.onclick=()=>{
+  WROLE=b.dataset.role;const f=$(WROLE==="kharej"?"#wK":"#wI");
+  f.querySelector(".wname").value=suggestName();
+  if(WROLE==="kharej"&&DEF){
+    $("#kIP").value=$("#kIP").value||DEF.ip||"";
+    $$("#kTrs .tr").forEach(r=>{const i=r.querySelector("input[type=text]");if(!i.value)i.value=DEF[r.dataset.k]||""});
+  }
+  wShow(WROLE==="kharej"?"wK":"wI");wStep(2);
+});
+$$("#kMode button").forEach(b=>b.onclick=()=>{
+  $$("#kMode button").forEach(x=>x.classList.toggle("on",x===b));const rev=b.dataset.v==="reverse";
+  $("#kIPf").hidden=rev;$("#kRevf").hidden=!rev;
+  $("#kCdnHint").innerHTML=rev?"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>سرور ایران</b> اشاره می‌کند.":"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند. با SSL حالت Flexible یا Full کار می‌کند (پورت 80 و 443).";
+});
+function syncTrs(){$$("#kTrs .tr").forEach(r=>r.classList.toggle("off",!r.querySelector("input[type=checkbox]").checked));
+  $("#kKcp").hidden=!$$("#kTrs .tr").some(r=>["kcp","ftcp"].includes(r.dataset.k)&&!r.classList.contains("off"))}
+$("#kTrs").addEventListener("change",syncTrs);
+async function wSubmit(form,path,body,errEl){
+  errEl.textContent="";const name=form.querySelector(".wname").value.trim();body.Name=name;
+  if(!/^[a-z0-9][a-z0-9-]{0,31}$/.test(name)){errEl.textContent="نام تانل نامعتبر است";return}
+  if((ST?.tunnels||[]).some(t=>t.name===name)){
+    if(!confirm("تانل «"+name+"» وجود دارد و با تنظیمات جدید جایگزین می‌شود. ادامه؟"))return;body.Replace=true}
+  const btn=form.querySelector(".btn.p");
+  await busy(btn,async()=>{
+    try{
+      const r=await api("POST",path,body,false);
+      $("#dTitle").textContent="تانل «"+name+"» ساخته شد و اجرا شد";
+      $("#dSub").textContent=WROLE==="kharej"?"قدم بعد: توکن را در سرور ایران وارد کنید":"اتصال چند ثانیه‌ی دیگر برقرار می‌شود؛ وضعیت را در داشبورد ببینید";
+      $("#dTokBox").hidden=!r.token;$("#dTok").textContent=r.token||"";
+      $("#dNotes").innerHTML=(r.notes||[]).map(n=>`<li>${esc(n.fa)}</li>`).join("");
+      wShow("wDone");wStep(3);CUR=name;CFGCACHE={};await refresh();renderTunList();
+    }catch(e){if(e.message!=="unauthorized")errEl.textContent=e.message}
+  });
+}
+$("#wK").onsubmit=e=>{
+  e.preventDefault();const rev=$("#kMode .on").dataset.v==="reverse";const body={};
+  $$("#kTrs .tr").forEach(r=>{const on=r.querySelector("input[type=checkbox]").checked;body[r.dataset.k.toUpperCase()]=on?r.querySelector("input[type=text]").value.trim():""});
+  if(!body.TLS&&!body.TCP&&!body.KCP&&!body.FTCP&&!body.WS){$("#kErr").textContent="حداقل یک پروتکل را روشن کنید";return}
+  Object.assign(body,{IP:rev?"":$("#kIP").value.trim(),Reverse:rev?$("#kRev").value.trim():"",CDN:$("#kCdn").value.trim(),
+    KCPMode:$("#kKmode").value,FEC:$("#kFec").value,AllowLocal:$("#kAllow").value.trim(),Profile:$("#kProf").value,
+    Cipher:$("#kCipher").value,Fingerprint:$("#kFP").value,Refresh:+$("#kRefresh").value});
+  if(rev&&!body.Reverse){$("#kErr").textContent="IP سرور ایران را وارد کنید";return}
+  wSubmit($("#wK"),"setup/kharej",body,$("#kErr")).catch(()=>{});
+};
+$("#wI").onsubmit=e=>{
+  e.preventDefault();const tok=$("#iTok").value.replace(/\s+/g,"");
+  if(!tok.startsWith("MRG1.")){$("#iErr").textContent="توکن باید با MRG1. شروع شود";return}
+  const fwd=$("#iFwd").value.trim(),socks=$("#iSocks").value.trim();
+  if(!fwd&&!socks){$("#iErr").textContent="حداقل یک فوروارد یا پورت SOCKS5 وارد کنید";return}
+  wSubmit($("#wI"),"setup/iran",{Token:tok,Forward:fwd,ForwardUDP:$("#iUdp").checked,Socks:socks},$("#iErr")).catch(()=>{});
+};
+$("#dCopy").onclick=async()=>{try{await navigator.clipboard.writeText($("#dTok").textContent);toast("کپی شد")}catch(e){toast("توکن را انتخاب و دستی کپی کنید",true)}};
+$("#dOk").onclick=()=>{$("#wiz").hidden=true;$("#wK").reset();$("#wI").reset();syncTrs()};
 
 /* ---------- logs ---------- */
 async function loadLogs(){
