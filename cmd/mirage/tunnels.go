@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mirage/internal/app"
+	"mirage/internal/node"
 )
 
 func tunnelPath(name string) string {
@@ -38,7 +39,7 @@ func applyService(path string) error {
 		if resp, err := cl.Post(u+"/reload", "application/json", nil); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				fmt.Println(sOK.Render("✓ tunnel started"))
+				fmt.Println(sOK.Render("✓ applied to the running service"))
 				return nil
 			}
 		}
@@ -77,14 +78,10 @@ func cmdTunnel(args []string) error {
 		}
 		return applyService(path)
 	case "remove", "rm":
-		if len(args) < 2 || !app.ValidTunnelName(args[1]) {
+		if len(args) < 2 || (args[1] != app.MainTunnel && !app.ValidTunnelName(args[1])) {
 			return errors.New("usage: mirage tunnel remove NAME")
 		}
-		if err := os.Remove(tunnelPath(args[1])); err != nil {
-			return err
-		}
-		fmt.Println(sOK.Render("✓ removed " + args[1]))
-		return applyService(tunnelPath(args[1]))
+		return removeTunnel(args[1])
 	case "token":
 		if len(args) < 2 {
 			return errors.New("usage: mirage tunnel token NAME")
@@ -96,5 +93,34 @@ func cmdTunnel(args []string) error {
 
 func tunnelList() error {
 	fmt.Println(tunnelTable())
+	return nil
+}
+
+// removeTunnel stops one tunnel. Removing main keeps only the panel and
+// status settings in the main config, so the service, the panel and the
+// other tunnels keep running.
+func removeTunnel(name string) error {
+	if name != app.MainTunnel {
+		if err := os.Remove(tunnelPath(name)); err != nil {
+			return err
+		}
+		fmt.Println(sOK.Render("✓ removed tunnel " + name))
+		return applyService(tunnelPath(name))
+	}
+	cur, err := node.LoadConfig(defaultConfig)
+	if err != nil {
+		return err
+	}
+	if cur.Empty() {
+		return errors.New("there is no main tunnel")
+	}
+	empty := &node.Config{Panel: cur.Panel, Status: cur.Status}
+	if err := empty.Save(defaultConfig); err != nil {
+		return err
+	}
+	fmt.Println(sOK.Render("✓ removed tunnel main"))
+	if err := reloadRunning(defaultConfig); err != nil {
+		return systemctl("restart", service)
+	}
 	return nil
 }

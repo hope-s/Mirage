@@ -236,7 +236,7 @@ textarea.code{width:100%;min-height:380px;font:12.5px/1.6 ui-monospace,SFMono-Re
 
         <form id="wK" hidden autocomplete="off">
           <div class="fields">
-            <div class="field"><label>نام تانل</label><input type="text" class="ltr wname" placeholder="de2"><div class="sm mut">حروف کوچک انگلیسی، عدد و -. اگر نام یک تانل موجود (مثل main) را بدهید، جایگزین می‌شود.</div></div>
+            <div class="field"><label>نام تانل</label><input type="text" class="ltr wname" placeholder="de2"><div class="sm mut">حروف کوچک انگلیسی، عدد و -. اگر نام یک تانل موجود را بدهید، جایگزین می‌شود.</div></div>
             <div class="field"><label>جهت اتصال</label>
               <div class="seg" id="kMode"><button type="button" data-v="direct" class="on">مستقیم: ایران ← خارج</button><button type="button" data-v="reverse">معکوس: خارج ← ایران</button></div>
               <div class="sm mut">معکوس فقط وقتی که سرور ایران نمی‌تواند به خارج وصل شود.</div></div>
@@ -473,14 +473,16 @@ function render(){
   $("#ver").textContent="v"+ST.version;
   const ts=ST.tunnels||[];
   const sel=$("#tunnelSel");
+  if(!ts.find(t=>t.name===CUR))CUR=ts[0]?.name||"main";
   if(ts.length>1){
     const want=ts.map(t=>t.name).join(",");
     if(sel.dataset.k!==want){sel.innerHTML=ts.map(t=>`<option value="${esc(t.name)}">تانل: ${esc(t.name)}</option>`).join("");sel.dataset.k=want}
-    if(!ts.find(t=>t.name===CUR))CUR="main";
     sel.value=CUR;sel.hidden=false;
-  }else{sel.hidden=true;CUR="main"}
-  const t=tun();if(!t)return;
-  const rc=$("#roleChip");rc.textContent="سرور "+roleFa(t.role);rc.className="chip "+(t.role==="iran"?"ok":"warn");
+  }else sel.hidden=true;
+  const t=tun();
+  const rc=$("#roleChip");
+  if(t){rc.textContent="سرور "+roleFa(t.role);rc.className="chip "+(t.role==="iran"?"ok":"warn")}
+  else{rc.textContent="بدون تانل";rc.className="chip bad"}
   // stats (all tunnels)
   const h=ST.history||[],last=h[h.length-1]||{in:0,out:0};
   $("#sIn").innerHTML=mbps(last.in)+"<small>Mbps</small>";$("#sOut").innerHTML=mbps(last.out)+"<small>Mbps</small>";
@@ -495,8 +497,9 @@ function render(){
     const st=!x.running?"b":lu===0?"b":lu<ls.length?"w":"";
     return `<tr><td><span class="row"><i class="dot ${st}"></i><b>${esc(x.name)}</b></span></td><td>${roleFa(x.role)}</td><td>${profFa[x.profile]||esc(x.profile)}</td>
       <td class="ltr">${lu}/${ls.length}</td><td class="ltr">${(x.sessions||[]).length}</td><td class="ltr">${isFinite(best)?best.toFixed(0)+" ms":"-"}</td>
-      <td class="ltr sm">${(x.forwards||[]).map(esc).join("<br>")||"-"}</td></tr>`}).join("")||`<tr><td colspan="7" class="empty">تانلی نیست</td></tr>`;
-  renderLinks(t);draw();if(TAB==="tun")renderTunList();
+      <td class="ltr sm">${(x.forwards||[]).map(esc).join("<br>")||"-"}</td></tr>`}).join("")||`<tr><td colspan="7" class="empty">تانلی نیست؛ از تب «تانل‌ها» ← «ساخت تانل» یکی بسازید</td></tr>`;
+  if(t)renderLinks(t);else{$("#linkRows").innerHTML=$("#sessRows").innerHTML=`<tr><td colspan="9" class="empty">تانلی نیست؛ از تب «تانل‌ها» یکی بسازید</td></tr>`}
+  draw();if(TAB==="tun")renderTunList();
 }
 function renderLinks(t){
   let kcp=false;
@@ -657,17 +660,19 @@ function renderTunList(){
     const st=!x.running?'<span class="chip bad">متوقف</span>':lu===0?'<span class="chip bad">قطع</span>':lu<ls.length?'<span class="chip warn">ناقص</span>':'<span class="chip ok">وصل</span>';
     return `<tr><td><b class="ltr">${esc(x.name)}</b></td><td>${roleFa(x.role)}</td><td class="ltr sm">${[...new Set((x.links||[]).map(l=>l.transport))].join(" · ")}</td>
       <td>${st} <span class="ltr sm mut">${lu}/${ls.length}</span></td><td class="ltr sm">${(x.forwards||[]).map(esc).join("<br>")||"-"}</td>
-      <td>${x.name==="main"?"":`<button class="btn sm d" data-rm="${esc(x.name)}">حذف</button>`}</td></tr>`}).join("");
+      <td><button class="btn sm d" data-rm="${esc(x.name)}">حذف</button></td></tr>`}).join("")
+    ||`<tr><td colspan="6" class="empty">هنوز تانلی روی این سرور نیست. با «ساخت تانل» شروع کنید.</td></tr>`;
 }
 $("#tunList").addEventListener("click",async e=>{
   const b=e.target.closest("[data-rm]");if(!b)return;const n=b.dataset.rm;
-  if(!confirm("تانل «"+n+"» حذف شود؟ تنظیماتش پاک و پورت‌هایش بسته می‌شود."))return;
-  await busy(b,async()=>{await api("POST","tunnel/remove",{Name:n},false);if(CUR===n)CUR="main";toast("تانل حذف شد");await refresh();renderTunList()});
+  const last=(ST?.tunnels||[]).length===1;
+  if(!confirm("تانل «"+n+"» حذف شود؟\nتنظیماتش پاک و پورت‌هایش بسته می‌شود."+(last?"\nاین تنها تانل است؛ پنل روشن می‌ماند و می‌توانید دوباره تانل بسازید.":"\nتانل‌های دیگر و پنل بدون تغییر کار می‌کنند.")))return;
+  await busy(b,async()=>{await api("POST","tunnel/remove",{Name:n},false);CFGCACHE={};toast("تانل «"+n+"» حذف شد");await refresh();renderTunList()});
 });
 let DEF=null,WROLE="";
 function wStep(n){$$("#wSteps span").forEach(s=>{const k=+s.dataset.s;s.className=k===n?"on":k<n?"done":""})}
 function wShow(id){["wRole","wK","wI","wDone"].forEach(x=>$("#"+x).hidden=x!==id)}
-function suggestName(){const have=new Set(ST?.tunnels?.map(t=>t.name)||[]);for(let i=2;;i++){const n="t"+i;if(!have.has(n))return n}}
+function suggestName(){const have=new Set(ST?.tunnels?.map(t=>t.name)||[]);if(!have.has("main"))return "main";for(let i=2;;i++){const n="t"+i;if(!have.has(n))return n}}
 $("#newTunBtn").onclick=async()=>{
   $("#wiz").hidden=false;wShow("wRole");wStep(1);$("#wiz").scrollIntoView({behavior:"smooth",block:"start"});
   try{DEF=await api("GET","setup/defaults",null,false)}catch(e){DEF={}}

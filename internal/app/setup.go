@@ -52,10 +52,16 @@ func (a *App) PutTunnel(name string, cfg *node.Config) error {
 	return nil
 }
 
-// RemoveTunnel stops an extra tunnel and deletes its file.
+// RemoveTunnel stops a tunnel. An extra tunnel's file is deleted; the main
+// config keeps only its panel and status settings, so the panel and the
+// other tunnels stay up.
 func (a *App) RemoveTunnel(name string) error {
 	if name == MainTunnel {
-		return errors.New("the main tunnel cannot be removed from the panel")
+		_, cur := a.Node()
+		if cur == nil || cur.Empty() {
+			return errors.New("there is no main tunnel")
+		}
+		return a.SaveTunnel(MainTunnel, &node.Config{Panel: cur.Panel, Status: cur.Status})
 	}
 	t := a.get(name)
 	if t == nil {
@@ -127,7 +133,7 @@ func (a *App) replaceable(name string, replace bool) (map[int]bool, error) {
 		return nil, errors.New("enter a tunnel name")
 	}
 	_, cur, _ := a.Tunnel(name)
-	if cur == nil {
+	if cur == nil || cur.Empty() {
 		return nil, nil
 	}
 	if !replace {

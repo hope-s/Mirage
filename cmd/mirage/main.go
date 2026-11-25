@@ -23,7 +23,7 @@ import (
 	"mirage/internal/setup"
 )
 
-const version = "2.1.0"
+const version = "2.1.1"
 
 // defaultConfig is the main tunnel's file; MIRAGE_CONFIG overrides it.
 var defaultConfig = orDefault(os.Getenv("MIRAGE_CONFIG"), "/etc/mirage/config.json")

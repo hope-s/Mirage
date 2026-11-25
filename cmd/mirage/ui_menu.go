@@ -21,7 +21,7 @@ type menuItem struct {
 
 var menuItems = []menuItem{
 	{"setup", "Set up this server", "Make this server KHAREJ or IRAN in a few guided steps", "SETUP"},
-	{"tunnels", "Tunnels", "Add more tunnels on this server, list or remove them", "SETUP"},
+	{"tunnels", "Tunnels", "Add, list or remove tunnels (including main)", "SETUP"},
 	{"settings", "Tunnel settings", "Profile, encryption, auto refresh, allowed ports and forwards", "SETUP"},
 	{"dash", "Live dashboard", "Links, connections and traffic, updated every second", "MONITOR"},
 	{"speed", "Speed test", "Download, upload and ping through the tunnel (iran side)", "MONITOR"},
@@ -128,12 +128,14 @@ func (m menuModel) header() string {
 		lines = append(lines, sWarn.Render("● this server is not set up yet"),
 			sDim.Render("choose ")+sBold.Render("Set up this server")+sDim.Render(" to start"))
 	default:
-		role := strings.ToUpper(m.cfg.Role)
 		n := 1
 		if m.st != nil {
 			n = len(m.st.Tunnels)
 		}
-		head := sBold.Render(role+" server") + sDim.Render(fmt.Sprintf(" · %d tunnel%s", n, plural(n)))
+		head := sBold.Render(strings.ToUpper(m.cfg.Role)+" server") + sDim.Render(fmt.Sprintf(" · %d tunnel%s", n, plural(n)))
+		if m.cfg.Empty() {
+			head = sBold.Render("Mirage server") + sDim.Render(fmt.Sprintf(" · %d tunnel%s", n, plural(n)))
+		}
 		lines = append(lines, head)
 		switch {
 		case m.stErr != nil:
@@ -143,6 +145,9 @@ func (m menuModel) header() string {
 		default:
 			for _, t := range m.st.Tunnels {
 				lines = append(lines, sDim.Render(fmt.Sprintf("%-8s ", t.Name))+healthBadge(t))
+			}
+			if len(m.st.Tunnels) == 0 {
+				lines = append(lines, sWarn.Render("● no tunnels yet")+sDim.Render(" · choose Set up this server, Tunnels or the web panel"))
 			}
 			in, out := lastRate(*m.st)
 			lines = append(lines, sAccent.Render(fmt.Sprintf("↓ %.2f  ↑ %.2f Mbps", in, out))+

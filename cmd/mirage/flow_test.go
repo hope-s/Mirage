@@ -475,15 +475,42 @@ func TestPanelSetupTunnels(t *testing.T) {
 	}
 	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwd))
 
+	// removing main keeps the panel and the other tunnels
+	if err := a.RemoveTunnel(app.MainTunnel); err != nil {
+		t.Fatal(err)
+	}
+	mc, err := node.LoadConfig(main)
+	if err != nil || !mc.Empty() || mc.Panel == nil || mc.Status == "" {
+		t.Fatalf("main config after removal: %+v %v", mc, err)
+	}
+	if names := a.TunnelNames(); fmt.Sprint(names) != "[kx ix]" {
+		t.Fatalf("tunnels after removing main: %v", names)
+	}
+	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwd))
 	if err := a.RemoveTunnel(app.MainTunnel); err == nil {
-		t.Fatal("main tunnel removed")
+		t.Fatal("main removed twice")
 	}
 	for _, n := range []string{"ix", "kx"} {
 		if err := a.RemoveTunnel(n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if names := a.TunnelNames(); len(names) != 1 {
+	if names := a.TunnelNames(); len(names) != 0 {
 		t.Fatalf("tunnels left: %v", names)
+	}
+	if err := a.Reload(); err != nil {
+		t.Fatal("reload with no tunnels:", err)
+	}
+
+	// a new main tunnel can be made from the panel and keeps the login
+	if _, err := a.SetupKharej(app.KharejRequest{Name: app.MainTunnel, IP: "127.0.0.1", TCP: strconv.Itoa(freeP(t))}); err != nil {
+		t.Fatal(err)
+	}
+	mc2, _ := node.LoadConfig(main)
+	if mc2 == nil || mc2.Empty() || mc2.Panel == nil || mc2.Panel.Pass != mc.Panel.Pass {
+		t.Fatalf("recreated main: %+v", mc2)
+	}
+	if names := a.TunnelNames(); fmt.Sprint(names) != "[main]" {
+		t.Fatalf("tunnels: %v", names)
 	}
 }

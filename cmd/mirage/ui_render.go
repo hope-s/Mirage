@@ -48,9 +48,6 @@ func fetchStatus(cfgPath string) (app.StatusData, error) {
 		return st, err
 	}
 	err = json.Unmarshal(body, &st)
-	if len(st.Tunnels) == 0 {
-		st.Tunnels = []app.TunnelStatus{{Name: app.MainTunnel, Status: st.Status, Profile: st.Profile, Running: true}}
-	}
 	return st, err
 }
 
@@ -239,6 +236,9 @@ func renderStatus(st app.StatusData, width int) string {
 	parts := []string{head}
 	for _, t := range st.Tunnels {
 		parts = append(parts, renderTunnelCard(t, width, true))
+	}
+	if len(st.Tunnels) == 0 {
+		parts = append(parts, sDim.Render("no tunnels on this server yet"))
 	}
 	return strings.Join(parts, "\n")
 }

@@ -195,7 +195,16 @@ func checkHostPort(s string, needHost bool) error {
 }
 
 // Validate checks the config for mistakes.
+// Empty reports a config without a tunnel: only the panel and status
+// settings, kept when the main tunnel is removed so the panel stays up.
+func (c *Config) Empty() bool {
+	return c.Role == "" && len(c.Listen) == 0 && len(c.Dial) == 0 && len(c.Forward) == 0 && len(c.Socks) == 0
+}
+
 func (c *Config) Validate() error {
+	if c.Empty() {
+		return c.validateAccess()
+	}
 	if c.Role != RoleIran && c.Role != RoleKharej {
 		return fmt.Errorf("role must be %q or %q", RoleIran, RoleKharej)
 	}
@@ -326,6 +335,11 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("profile must be speed, balanced or stealth")
 	}
+	return c.validateAccess()
+}
+
+// validateAccess checks the panel and status settings.
+func (c *Config) validateAccess() error {
 	if c.Panel != nil {
 		p := c.Panel
 		if err := checkHostPort(p.Listen, false); err != nil {

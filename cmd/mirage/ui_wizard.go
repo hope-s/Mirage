@@ -36,7 +36,7 @@ func wizardSetup() error {
 }
 
 func confirmOverwrite(path string) bool {
-	if _, err := os.Stat(path); err == nil {
+	if c := existing(path); c != nil && !c.Empty() {
 		return confirm("Replace the current settings?", path+" already exists. The tunnel restarts with the new settings.", false)
 	}
 	return true
@@ -456,7 +456,7 @@ func splitPort(addr string) (string, int, error) {
 
 // tunnelFiles lists every tunnel on this server with its config path.
 func tunnelFiles() (names, paths []string) {
-	if _, err := os.Stat(defaultConfig); err == nil {
+	if c := existing(defaultConfig); c != nil && !c.Empty() {
 		names, paths = append(names, app.MainTunnel), append(paths, defaultConfig)
 	}
 	files, _ := filepath.Glob(filepath.Join(app.TunnelsDir(defaultConfig), "*.json"))
@@ -558,7 +558,7 @@ func tunnelAction(act string) error {
 	switch act {
 	case "kharej", "iran":
 		if _, err := os.Stat(defaultConfig); err != nil {
-			return errors.New("set up the main tunnel first (Set up this server)")
+			return errors.New("set up this server first (Set up this server)")
 		}
 		name := ""
 		if form(huh.NewGroup(huh.NewInput().Title("Name for the new tunnel").Description("a-z, 0-9 and -, e.g. de2").
@@ -585,19 +585,30 @@ func tunnelAction(act string) error {
 	case "token":
 		return tokenScreen()
 	case "remove":
-		name, _, err := pickTunnel("Remove which tunnel?", nil)
-		if err != nil {
-			return err
-		}
-		if name == app.MainTunnel {
-			return errors.New("the main tunnel is removed with Uninstall")
-		}
-		if !confirm("Remove tunnel "+name+"?", "Its settings are deleted and its ports close.", false) {
-			return errCancelled
-		}
-		return cmdTunnel([]string{"remove", name})
+		return removeScreen()
 	}
 	return errCancelled
+}
+
+// removeScreen deletes one tunnel after a confirmation that says what
+// keeps running.
+func removeScreen() error {
+	names, _ := tunnelFiles()
+	if len(names) == 0 {
+		return errors.New("there are no tunnels on this server")
+	}
+	name, _, err := pickTunnel("Remove which tunnel?", nil)
+	if err != nil {
+		return err
+	}
+	desc := "Its settings are deleted and its ports close. Other tunnels keep running."
+	if len(names) == 1 {
+		desc = "This is the only tunnel. The service and web panel keep running, so you can set up a new tunnel any time (or choose Uninstall to remove everything)."
+	}
+	if !confirm("Remove tunnel "+name+"?", desc, false) {
+		return errCancelled
+	}
+	return removeTunnel(name)
 }
 
 func tokenScreen() error {

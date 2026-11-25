@@ -117,6 +117,9 @@ func (m dashModel) View() string {
 		}
 		parts = append(parts, renderTunnelCard(t, w, m.sessions))
 	}
+	if len(st.Tunnels) == 0 {
+		parts = append(parts, sDim.Render("no tunnels on this server yet"))
+	}
 	keys := " q back · c connections"
 	if len(st.Tunnels) > 1 {
 		keys += " · tab switch tunnel"

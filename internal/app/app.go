@@ -175,6 +175,9 @@ func (a *App) TunnelNames() []string {
 	defer a.mu.Unlock()
 	var out []string
 	for _, t := range a.tunnels {
+		if t.cfg != nil && t.cfg.Empty() {
+			continue
+		}
 		out = append(out, t.name)
 	}
 	return out
@@ -254,6 +257,15 @@ func (a *App) apply(t *tunnel, cfg *node.Config) error {
 	a.mu.Unlock()
 	if old != nil {
 		old.Close() // free the ports
+	}
+	if cfg.Empty() { // main tunnel removed: keep only the panel and status
+		a.mu.Lock()
+		t.node, t.cfg, t.appliedAt, t.healthy = nil, cfg, time.Now(), time.Now()
+		a.mu.Unlock()
+		if old != nil {
+			log.Printf("tunnel %s: removed", t.name)
+		}
+		return nil
 	}
 	n, err := a.newNode(t, cfg)
 	if err == nil {
@@ -563,10 +575,13 @@ func (a *App) StatusData() StatusData {
 	a.mu.Lock()
 	ts := append([]*tunnel(nil), a.tunnels...)
 	for _, t := range ts {
+		if t.cfg != nil && t.cfg.Empty() {
+			continue
+		}
 		sd.Tunnels = append(sd.Tunnels, tunnelStatus(t))
 	}
 	a.mu.Unlock()
-	if len(sd.Tunnels) > 0 {
+	if len(sd.Tunnels) > 0 && sd.Tunnels[0].Name == MainTunnel {
 		m := sd.Tunnels[0]
 		sd.Status, sd.Profile, sd.Forwards = m.Status, m.Profile, m.Forwards
 	}
