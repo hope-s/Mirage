@@ -36,6 +36,7 @@ type tokenLink struct {
 	Backup bool     `json:"b,omitempty"`
 
 	KCP *transport.KCPOptions `json:"k,omitempty"`
+	CDN bool                  `json:"cd,omitempty"` // link goes through a CDN (dialer may scan edge IPs)
 }
 
 type token struct {
@@ -44,6 +45,9 @@ type token struct {
 	Links   []tokenLink `json:"l"`
 	Rotate  [2]int      `json:"r"`
 	Profile string      `json:"pf,omitempty"`
+	Refresh int         `json:"rf,omitempty"`
+	Cipher  string      `json:"ci,omitempty"`
+	FP      string      `json:"fp,omitempty"`
 }
 
 func encodeToken(t token) (string, error) {
@@ -277,6 +281,9 @@ func cmdSetupKharej(args []string) error {
 	fallback := fs.String("fallback", "", "send probes to this real web server (host:port) instead of the built-in decoy")
 	rotate := fs.String("rotate", "20-60", "replace connections after a random number of minutes in this range; 0 to disable")
 	profile := fs.String("profile", "balanced", "speed | balanced | stealth")
+	refresh := fs.Int("refresh", 0, "rebuild the tunnel every N hours (0 = off); also applied on the iran side")
+	fingerprint := fs.String("fingerprint", "chrome", "TLS fingerprint for tls/wss links: chrome | firefox | safari | edge | ios | random | go")
+	cipherName := fs.String("cipher", "auto", "session cipher: aes-256-gcm | chacha20-poly1305 | auto (chacha20 on CPUs without AES acceleration)")
 	panel := fs.Bool("panel", true, "enable the web panel")
 	status := fs.String("status", "127.0.0.1:7788", "local status address (empty to disable)")
 	out := fs.String("c", defaultConfig, "where to write the config")
@@ -292,9 +299,6 @@ func cmdSetupKharej(args []string) error {
 		}
 		fmt.Printf("detected server IP: %s (use -ip to change)\n", *ip)
 	}
-	if !direct && *cdn != "" {
-		return errors.New("-cdn works only in direct mode")
-	}
 	if *conns < 1 || *conns > 64 {
 		return errors.New("-conns must be 1..64")
 	}
@@ -302,6 +306,12 @@ func cmdSetupKharej(args []string) error {
 	case "speed", "balanced", "stealth":
 	default:
 		return errors.New("-profile must be speed, balanced or stealth")
+	}
+	if !transport.ValidFingerprint(*fingerprint) {
+		return fmt.Errorf("-fingerprint must be one of %v", transport.Fingerprints)
+	}
+	if !secure.ValidCipher(*cipherName) {
+		return errors.New("-cipher must be aes-256-gcm, chacha20-poly1305 or auto")
 	}
 	rmin, rmax, err := parseRotate(*rotate)
 	if err != nil {
@@ -333,9 +343,9 @@ func cmdSetupKharej(args []string) error {
 	cfg := &node.Config{
 		Role: node.RoleKharej, Key: hex.EncodeToString(psk[:]), Profile: *profile,
 		RotateMin: rmin, RotateMax: rmax, Status: *status, AllowLocal: splitList(*allow),
-		Panel: newPanel(*panel),
+		Panel: newPanel(*panel), RefreshHours: *refresh, Cipher: *cipherName, Fingerprint: *fingerprint,
 	}
-	tk := token{V: 1, Key: cfg.Key, Rotate: [2]int{rmin, rmax}, Profile: *profile}
+	tk := token{V: 1, Key: cfg.Key, Rotate: [2]int{rmin, rmax}, Profile: *profile, Refresh: *refresh, Cipher: *cipherName, FP: *fingerprint}
 
 	kinds := []struct {
 		kind  string
@@ -399,29 +409,42 @@ func cmdSetupKharej(args []string) error {
 		tk.Links = append(tk.Links, tl)
 	}
 	if *cdn != "" {
+		// the side that owns the CDN origin listens with plain ws (or wss
+		// for Full SSL); the other side dials wss to the CDN on 443
 		kind := "ws"
 		if *cdnOriginTLS {
 			kind = "wss"
 		}
-		if other, dup := usedPorts[*cdnOrigin]; dup && other != kind {
-			return fmt.Errorf("cdn origin port %d is already used by %s", *cdnOrigin, other)
-		}
-		if _, dup := usedPorts[*cdnOrigin]; !dup {
-			if !*noPortCheck && !portFree(*cdnOrigin) {
-				return fmt.Errorf("cdn origin port %d is already in use on this server", *cdnOrigin)
+		if direct {
+			if other, dup := usedPorts[*cdnOrigin]; dup && other != kind {
+				return fmt.Errorf("cdn origin port %d is already used by %s", *cdnOrigin, other)
 			}
-			lc := node.ListenConf{Name: fmt.Sprintf("cdn-%d", *cdnOrigin), Transport: kind,
-				Addr: ":" + strconv.Itoa(*cdnOrigin), SNI: *cdn, Path: *path, Fallback: *fallback}
-			if kind == "wss" {
-				lc.Cert = filepath.Join(dir, "cdn-cert.pem")
-				lc.CertKey = filepath.Join(dir, "cdn-key.pem")
+			if _, dup := usedPorts[*cdnOrigin]; !dup {
+				if !*noPortCheck && !portFree(*cdnOrigin) {
+					return fmt.Errorf("cdn origin port %d is already in use on this server", *cdnOrigin)
+				}
+				lc := node.ListenConf{Name: fmt.Sprintf("cdn-%d", *cdnOrigin), Transport: kind,
+					Addr: ":" + strconv.Itoa(*cdnOrigin), SNI: *cdn, Path: *path, Fallback: *fallback}
+				if kind == "wss" {
+					lc.Cert = filepath.Join(dir, "cdn-cert.pem")
+					lc.CertKey = filepath.Join(dir, "cdn-key.pem")
+				}
+				cfg.Listen = append(cfg.Listen, lc)
 			}
-			cfg.Listen = append(cfg.Listen, lc)
+			tk.Links = append(tk.Links, tokenLink{
+				Name: "cdn", T: "wss", Mode: "d", Addrs: []string{net.JoinHostPort(*cdn, "443")},
+				SNI: *cdn, Host: *cdn, Path: *path, Conns: *conns, Backup: true, CDN: true,
+			})
+		} else {
+			// reverse: the CDN domain points at the IRAN server
+			cfg.Dial = append(cfg.Dial, node.DialConf{Name: "cdn", Transport: "wss",
+				Addrs: []string{net.JoinHostPort(*cdn, "443")}, SNI: *cdn, Host: *cdn, Path: *path,
+				Conns: *conns, Backup: true, CDN: *cdn})
+			tk.Links = append(tk.Links, tokenLink{
+				Name: "cdn", T: kind, Mode: "r", Addrs: []string{":" + strconv.Itoa(*cdnOrigin)},
+				SNI: *cdn, Path: *path, Backup: true, CDN: true,
+			})
 		}
-		tk.Links = append(tk.Links, tokenLink{
-			Name: "cdn", T: "wss", Mode: "d", Addrs: []string{net.JoinHostPort(*cdn, "443")},
-			SNI: *cdn, Host: *cdn, Path: *path, Conns: *conns, Backup: true,
-		})
 	}
 	if len(tk.Links) == 0 {
 		return errors.New("no transport enabled; set at least one of -tcp -tls -kcp -ftcp -ws -wss -cdn")
@@ -512,7 +535,7 @@ func cmdSetupIran(args []string) error {
 		prof = *profile
 	}
 	cfg := &node.Config{Role: node.RoleIran, Key: t.Key, Status: *status, Profile: prof,
-		RotateMin: t.Rotate[0], RotateMax: t.Rotate[1], Panel: newPanel(*panel)}
+		RotateMin: t.Rotate[0], RotateMax: t.Rotate[1], Panel: newPanel(*panel), RefreshHours: t.Refresh, Cipher: t.Cipher, Fingerprint: t.FP}
 	dir := filepath.Dir(*out)
 	var listenPorts []string
 	for _, l := range t.Links {
@@ -522,8 +545,12 @@ func cmdSetupIran(args []string) error {
 		}
 		switch l.Mode {
 		case "d":
-			cfg.Dial = append(cfg.Dial, node.DialConf{Name: l.Name, Transport: l.T, Addrs: l.Addrs,
-				SNI: l.SNI, Host: l.Host, Path: l.Path, Conns: c, Backup: l.Backup, KCP: l.KCP})
+			dc := node.DialConf{Name: l.Name, Transport: l.T, Addrs: l.Addrs,
+				SNI: l.SNI, Host: l.Host, Path: l.Path, Conns: c, Backup: l.Backup, KCP: l.KCP}
+			if l.CDN {
+				dc.CDN = l.Host
+			}
+			cfg.Dial = append(cfg.Dial, dc)
 		case "r":
 			for _, a := range l.Addrs {
 				_, port, _ := net.SplitHostPort(a)
@@ -533,6 +560,9 @@ func cmdSetupIran(args []string) error {
 				if l.T == "tls" || l.T == "wss" {
 					lc.Cert = filepath.Join(dir, "cert.pem")
 					lc.CertKey = filepath.Join(dir, "key.pem")
+				}
+				if l.CDN {
+					lc.Name = "cdn-" + port
 				}
 				cfg.Listen = append(cfg.Listen, lc)
 			}
@@ -601,6 +631,11 @@ func cmdSetupIran(args []string) error {
 	}
 	for _, s := range cfg.Socks {
 		fmt.Printf("  socks5 %s   (X-UI outbound: socks, address %s)\n", s.Listen, s.Listen)
+	}
+	for _, l := range t.Links {
+		if l.CDN && l.Mode == "r" {
+			fmt.Printf("  reverse CDN: in Cloudflare point %s (orange cloud) at THIS server's IP; origin port %s\n", l.SNI, strings.TrimPrefix(l.Addrs[0], ":"))
+		}
 	}
 	if len(listenPorts) > 0 {
 		fmt.Printf("  reverse mode: kharej will connect to this server on %s - open them in the firewall\n", strings.Join(listenPorts, ", "))

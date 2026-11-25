@@ -77,38 +77,50 @@ func menu() error {
 		fmt.Println(`
   1) Setup KHAREJ (foreign / exit) server
   2) Setup IRAN (entry) server
-  3) Status
-  4) Speed test (iran)
-  5) Web panel address & login
-  6) Show pairing token (kharej)
-  7) Restart service
-  8) Live logs
-  9) Install / update service
- 10) Uninstall
+  3) Tunnels - add more tunnels on this server / list / remove
+  4) Status
+  5) Speed test
+  6) Link test - measure every link and get advice
+  7) Cloudflare clean IP scan (CDN links)
+  8) Web panel address & login
+  9) Show pairing token (kharej)
+ 10) Restart service
+ 11) Live logs
+ 12) Update Mirage to the latest version
+ 13) Backup / restore settings
+ 14) Uninstall
   0) Exit`)
 		var err error
 		switch ask("\nchoose", "") {
 		case "1":
-			err = wizardKharej()
+			err = wizardKharej(defaultConfig)
 		case "2":
-			err = wizardIran()
+			err = wizardIran(defaultConfig)
 		case "3":
-			err = cmdStatus(nil)
+			err = tunnelMenu()
 		case "4":
-			err = cmdSpeedtest(nil)
+			err = cmdStatus(nil)
 		case "5":
-			err = cmdPanel(nil)
+			err = cmdSpeedtest(nil)
 		case "6":
-			err = cmdToken(nil)
+			err = cmdLinktest(nil)
 		case "7":
+			err = cmdCFScan([]string{"-apply=" + strconv.FormatBool(askYN("switch the link to the best IPs found?", true))})
+		case "8":
+			err = cmdPanel(nil)
+		case "9":
+			err = cmdToken(nil)
+		case "10":
 			if err = systemctl("restart", service); err == nil {
 				fmt.Println(cGreen + "restarted" + cReset)
 			}
-		case "8":
+		case "11":
 			err = cmdLogs()
-		case "9":
-			err = cmdInstall()
-		case "10":
+		case "12":
+			err = cmdUpdate(nil)
+		case "13":
+			err = backupMenu()
+		case "14":
 			if askYN(cRed+"remove mirage completely (service, config, binary)?"+cReset, false) {
 				err = cmdUninstall()
 				if err == nil {
@@ -127,18 +139,20 @@ func menu() error {
 	}
 }
 
-func confirmOverwrite() bool {
-	if _, err := os.Stat(defaultConfig); err == nil {
+func confirmOverwrite(path string) bool {
+	if _, err := os.Stat(path); err == nil {
 		return askYN(cYel+"a config already exists and will be replaced. continue?"+cReset, false)
 	}
 	return true
 }
 
-func wizardKharej() error {
+// wizardKharej sets up the main tunnel (path = defaultConfig) or an extra
+// one in the tunnels directory.
+func wizardKharej(path string) error {
 	if err := needRoot(); err != nil {
 		return err
 	}
-	if !confirmOverwrite() {
+	if !confirmOverwrite(path) {
 		return nil
 	}
 	fmt.Printf("\n%s-- KHAREJ server setup --%s\n", cBold, cReset)
@@ -146,7 +160,7 @@ func wizardKharej() error {
 	fmt.Println("  1) iran -> kharej  (direct, normal case)")
 	fmt.Println("  2) kharej -> iran  (reverse, when iran cannot reach this server)")
 	mode := ask("mode", "1")
-	args := []string{"-force"}
+	args := append(extraArgs(path), "-force")
 	if mode == "2" {
 		args = append(args, "-reverse", ask("IRAN server IP", ""))
 	} else {
@@ -165,7 +179,11 @@ func wizardKharej() error {
 		args = append(args, "-kcp-mode", ask("  KCP speed", "fast2"))
 		args = append(args, "-fec", ask("  error correction data:parity (more parity = survives more loss; 0 = off)", "10:3"))
 	}
-	if cdn := ask("  CDN domain proxied by Cloudflare (optional backup)", ""); cdn != "" {
+	cdnQ := "  CDN domain proxied by Cloudflare, pointing at THIS server (optional backup)"
+	if mode == "2" {
+		cdnQ = "  CDN domain proxied by Cloudflare, pointing at the IRAN server (optional backup)"
+	}
+	if cdn := ask(cdnQ, ""); cdn != "" {
 		args = append(args, "-cdn", cdn, "-cdn-origin-port", ask("  origin port on this server for the CDN", "80"))
 	}
 	if ws != "" && askYN("  use WebSocket only as backup?", true) {
@@ -175,22 +193,25 @@ func wizardKharej() error {
 	args = append(args, "-allow-local", ask("  local ports", ""))
 	fmt.Println("\nProfile: speed (lowest ping/cpu) | balanced | stealth (hardest to detect)")
 	args = append(args, "-profile", ask("  profile", "balanced"))
+	args = append(args, "-refresh", ask("  rebuild the tunnel every N hours on both servers (0 = off)", "0"))
+	fmt.Println("\nEncryption: auto (picks the fastest for this CPU) | aes-256-gcm | chacha20-poly1305")
+	args = append(args, "-cipher", ask("  cipher", "auto"))
 	if err := cmdSetupKharej(args); err != nil {
 		return err
 	}
 	fmt.Println()
-	if err := startService(); err != nil {
+	if err := applyService(path); err != nil {
 		return err
 	}
 	fmt.Printf("\n%sdone.%s copy the token above, then on the iran server run: mirage  -> option 2\n", cGreen, cReset)
 	return nil
 }
 
-func wizardIran() error {
+func wizardIran(path string) error {
 	if err := needRoot(); err != nil {
 		return err
 	}
-	if !confirmOverwrite() {
+	if !confirmOverwrite(path) {
 		return nil
 	}
 	fmt.Printf("\n%s-- IRAN server setup --%s\n", cBold, cReset)
@@ -203,7 +224,7 @@ func wizardIran() error {
 	fmt.Println("  2) SOCKS5 for an X-UI outbound on this server (like Hedioum)")
 	fmt.Println("  3) both")
 	how := ask("choose", "1")
-	args := []string{"-force", "-token", tok}
+	args := append(extraArgs(path), "-force", "-token", tok)
 	if how == "1" || how == "3" {
 		fmt.Println("\nforwards as LOCAL=KHAREJ_PORT, comma separated. e.g. 443=2096,8443=2097")
 		fmt.Println("(a single number like 2096 means the same port on both sides)")
@@ -220,7 +241,7 @@ func wizardIran() error {
 		return err
 	}
 	fmt.Println()
-	if err := startService(); err != nil {
+	if err := applyService(path); err != nil {
 		return err
 	}
 	fmt.Printf("\n%sdone.%s check the tunnel with option 3 (status) or 4 (speed test).\n", cGreen, cReset)

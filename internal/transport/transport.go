@@ -64,6 +64,9 @@ type DialOptions struct {
 	Path  string     // WebSocket path
 	KCP   KCPOptions // kcp/ftcp tuning
 	Key   []byte     // packet obfuscation key (kcp/ftcp)
+	// Fingerprint is the TLS ClientHello to mimic (tls/wss): chrome
+	// (default), firefox, safari, edge, ios, random, or go.
+	Fingerprint string
 }
 
 // Dial opens one transport connection.
@@ -95,6 +98,19 @@ func Dial(ctx context.Context, o DialOptions) (net.Conn, error) {
 		alpn := []string{"h2", "http/1.1"}
 		if o.Kind == WSS {
 			alpn = []string{"http/1.1"}
+		}
+		if o.Fingerprint != "go" {
+			hctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			uc, err := uclient(hctx, raw, sni, alpn, o.Fingerprint)
+			if err != nil {
+				raw.Close()
+				return nil, err
+			}
+			if o.Kind == TLS {
+				return uc, nil
+			}
+			return wsUpgrade(uc, o, host, sni)
 		}
 		tc := tls.Client(raw, &tls.Config{
 			ServerName: sni,

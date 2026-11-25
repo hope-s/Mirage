@@ -33,6 +33,9 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/sys/cpu"
 )
 
 const (
@@ -45,7 +48,8 @@ const (
 	MaxPayload = 32 * 1024
 
 	clockSkew  = 120 * time.Second
-	hsVersion  = 1
+	hsVersion  = 1 // AES-256-GCM only (Mirage 1.0/1.1)
+	hsVersion2 = 2 // adds a cipher byte after the timestamp
 	maxHsPad   = 256
 	smallWrite = 512
 )
@@ -79,6 +83,64 @@ func derive(secret, salt []byte, info string, n int) []byte {
 		panic(err) // only possible with absurd lengths
 	}
 	return out
+}
+
+// Session ciphers. The dialing side asks for one in its handshake and the
+// listener follows; v1 peers always get AES-256-GCM.
+const (
+	CipherAES    = "aes-256-gcm"
+	CipherChaCha = "chacha20-poly1305"
+	CipherAuto   = "auto" // ChaCha20 when this CPU has no AES instructions
+)
+
+const (
+	cipherIDAES    byte = 1
+	cipherIDChaCha byte = 2
+)
+
+// ValidCipher reports whether name is a known cipher setting ("" = AES).
+func ValidCipher(name string) bool {
+	switch name {
+	case "", CipherAES, CipherChaCha, CipherAuto:
+		return true
+	}
+	return false
+}
+
+// HasAESHardware reports whether this CPU accelerates AES.
+func HasAESHardware() bool {
+	return cpu.X86.HasAES || cpu.ARM64.HasAES || cpu.S390X.HasAES
+}
+
+func cipherID(name string) byte {
+	switch name {
+	case CipherChaCha:
+		return cipherIDChaCha
+	case CipherAuto:
+		if !HasAESHardware() {
+			return cipherIDChaCha
+		}
+	}
+	return cipherIDAES
+}
+
+// CipherName names a cipher id.
+func CipherName(id byte) string {
+	if id == cipherIDChaCha {
+		return CipherChaCha
+	}
+	return CipherAES
+}
+
+func newSessionAEAD(id byte, key []byte) cipher.AEAD {
+	if id == cipherIDChaCha {
+		a, err := chacha20poly1305.New(key)
+		if err != nil {
+			panic(err)
+		}
+		return a
+	}
+	return newAEAD(key)
 }
 
 func newAEAD(key []byte) cipher.AEAD {
@@ -145,35 +207,56 @@ func openFrame(r io.Reader, a cipher.AEAD, n uint64, ad []byte) ([]byte, error) 
 	return body, nil
 }
 
-func hsBody() []byte {
+// hsBody builds a handshake body. ver 1 has no cipher byte (for v1 peers).
+func hsBody(ver, cid byte) []byte {
 	pad := randInt(maxHsPad)
-	b := make([]byte, 1+8+pad)
-	b[0] = hsVersion
+	b := make([]byte, 1+8+1+pad)
+	_, _ = rand.Read(b)
+	b[0] = ver
 	binary.BigEndian.PutUint64(b[1:9], uint64(time.Now().Unix()))
-	_, _ = rand.Read(b[9:])
+	if ver == hsVersion2 {
+		b[9] = cid
+	}
 	return b
 }
 
-func checkHsBody(b []byte) error {
-	if len(b) < 9 || b[0] != hsVersion {
-		return ErrAuth
+// checkHsBody validates a handshake body and returns its version and
+// requested cipher.
+func checkHsBody(b []byte) (ver, cid byte, err error) {
+	if len(b) < 9 || (b[0] != hsVersion && b[0] != hsVersion2) {
+		return 0, 0, ErrAuth
 	}
 	ts := time.Unix(int64(binary.BigEndian.Uint64(b[1:9])), 0)
 	if d := time.Since(ts); d > clockSkew || d < -clockSkew {
-		return ErrAuth
+		return 0, 0, ErrAuth
 	}
-	return nil
+	ver, cid = b[0], cipherIDAES
+	if ver == hsVersion2 {
+		if len(b) < 10 {
+			return 0, 0, ErrAuth
+		}
+		cid = b[9]
+		if cid != cipherIDAES && cid != cipherIDChaCha {
+			cid = cipherIDAES
+		}
+	}
+	return ver, cid, nil
 }
 
-func sessionKeys(shared []byte, psk PSK, salt []byte) (c2s, s2c cipher.AEAD) {
+func sessionKeys(cid byte, shared []byte, psk PSK, salt []byte) (c2s, s2c cipher.AEAD) {
 	secret := append(append([]byte{}, shared...), psk[:]...)
-	c2s = newAEAD(derive(secret, salt, "mirage c2s", 32))
-	s2c = newAEAD(derive(secret, salt, "mirage s2c", 32))
+	c2s = newSessionAEAD(cid, derive(secret, salt, "mirage c2s", 32))
+	s2c = newSessionAEAD(cid, derive(secret, salt, "mirage s2c", 32))
 	return
 }
 
-// Client performs the client side of the handshake over c.
-func Client(c net.Conn, psk PSK, timeout time.Duration) (*Conn, error) {
+// Client performs the client side of the handshake over c, asking for the
+// named session cipher (see CipherAES).
+func Client(c net.Conn, psk PSK, timeout time.Duration, cipherName string) (*Conn, error) {
+	return client(c, psk, timeout, hsVersion2, cipherID(cipherName))
+}
+
+func client(c net.Conn, psk PSK, timeout time.Duration, ver, cid byte) (*Conn, error) {
 	if timeout > 0 {
 		_ = c.SetDeadline(time.Now().Add(timeout))
 		defer c.SetDeadline(time.Time{})
@@ -192,7 +275,7 @@ func Client(c net.Conn, psk PSK, timeout time.Duration) (*Conn, error) {
 	masked := make([]byte, pubLen)
 	xor(masked, priv.PublicKey().Bytes(), k1[32:])
 	ad1 := append(append([]byte{}, salt...), masked...)
-	msg := append(ad1, sealFrame(newAEAD(k1[:32]), 0, hsBody(), ad1)...)
+	msg := append(ad1, sealFrame(newAEAD(k1[:32]), 0, hsBody(ver, cid), ad1)...)
 	if _, err := c.Write(msg); err != nil {
 		return nil, err
 	}
@@ -208,7 +291,8 @@ func Client(c net.Conn, psk PSK, timeout time.Duration) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkHsBody(body); err != nil {
+	_, cid, err = checkHsBody(body) // the server's choice; a v1 server answers v1: AES
+	if err != nil {
 		return nil, err
 	}
 	sPubB := make([]byte, pubLen)
@@ -221,8 +305,10 @@ func Client(c net.Conn, psk PSK, timeout time.Duration) (*Conn, error) {
 	if err != nil {
 		return nil, ErrAuth
 	}
-	c2s, s2c := sessionKeys(shared, psk, salt)
-	return newConn(c, br, s2c, c2s), nil
+	c2s, s2c := sessionKeys(cid, shared, psk, salt)
+	conn := newConn(c, br, s2c, c2s)
+	conn.cipher = cid
+	return conn, nil
 }
 
 // IsHTTPPrefix reports whether b starts like a plaintext HTTP/1 or HTTP/2
@@ -279,7 +365,8 @@ func Server(c net.Conn, psk PSK, rc *ReplayCache, timeout time.Duration) (*Conn,
 	if err != nil {
 		return nil, br, err
 	}
-	if err := checkHsBody(body); err != nil {
+	ver, cid, err := checkHsBody(body)
+	if err != nil {
 		return nil, br, err
 	}
 	if rc != nil && !rc.Add(salt) {
@@ -303,22 +390,25 @@ func Server(c net.Conn, psk PSK, rc *ReplayCache, timeout time.Duration) (*Conn,
 	sMasked := make([]byte, pubLen)
 	xor(sMasked, priv.PublicKey().Bytes(), k2[32:])
 	ad2 := append(append([]byte{}, sMasked...), salt...)
-	msg := append(sMasked, sealFrame(newAEAD(k2[:32]), 0, hsBody(), ad2)...)
+	msg := append(sMasked, sealFrame(newAEAD(k2[:32]), 0, hsBody(ver, cid), ad2)...)
 	if _, err := c.Write(msg); err != nil {
 		return nil, br, err
 	}
 	if timeout > 0 {
 		_ = c.SetDeadline(time.Time{})
 	}
-	c2s, s2c := sessionKeys(shared, psk, salt)
-	return newConn(c, br, c2s, s2c), br, nil
+	c2s, s2c := sessionKeys(cid, shared, psk, salt)
+	conn := newConn(c, br, c2s, s2c)
+	conn.cipher = cid
+	return conn, br, nil
 }
 
 // Conn is an encrypted record stream. It is safe for one concurrent reader
 // and any number of concurrent writers.
 type Conn struct {
-	raw net.Conn
-	br  *bufio.Reader
+	raw    net.Conn
+	br     *bufio.Reader
+	cipher byte
 
 	rmu   sync.Mutex
 	ra    cipher.AEAD
@@ -468,6 +558,9 @@ func (c *Conn) Write(p []byte) (int, error) {
 	}
 	return written, nil
 }
+
+// Cipher names the negotiated session cipher.
+func (c *Conn) Cipher() string { return CipherName(c.cipher) }
 
 func (c *Conn) Close() error                       { return c.raw.Close() }
 func (c *Conn) LocalAddr() net.Addr                { return c.raw.LocalAddr() }

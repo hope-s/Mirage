@@ -39,6 +39,13 @@ type Node struct {
 
 	linksMu sync.Mutex
 	links   map[string]*linkState
+	dials   map[string]*dialLink
+
+	// OnAddrs is called when a CDN scan replaces a link's addresses, so
+	// the owner can persist them. Set before Start.
+	OnAddrs func(link string, addrs []string)
+	scanMu  sync.Mutex
+	scans   map[string]*ScanReport // last CDN scan per link
 
 	allMu sync.Mutex
 	all   map[*mux.Session]sessInfo // every live session, both roles
@@ -71,10 +78,12 @@ func New(cfg *Config) (*Node, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	n := &Node{
-		cfg: cfg, psk: psk, log: &logger{debug: cfg.Debug}, prof: profileFor(cfg.Profile),
+		cfg: cfg, psk: psk, log: &logger{debug: cfg.Debug}, prof: profileFor(cfg),
 		replay: secure.NewReplayCache(),
 		ctx:    ctx, cancel: cancel,
 		links: map[string]*linkState{},
+		dials: map[string]*dialLink{},
+		scans: map[string]*ScanReport{},
 		all:   map[*mux.Session]sessInfo{},
 	}
 	if cfg.Role == RoleIran {
@@ -267,7 +276,7 @@ func (n *Node) acceptLoop(tl *transport.Listener, l ListenConf, st *linkState) {
 			sc.SetPadding(n.prof.pad)
 			s := mux.New(sc, false, n.prof.mux)
 			n.log.debugf("listen %s: session from %s", l.Name, c.RemoteAddr())
-			n.register(s, sessInfo{Link: l.Name, Transport: l.Transport, Remote: c.RemoteAddr().String(), Backup: l.Backup}, st)
+			n.register(s, sessInfo{Link: l.Name, Transport: l.Transport, Remote: c.RemoteAddr().String(), Backup: l.Backup, Cipher: sc.Cipher()}, st)
 			if n.ctx.Err() != nil {
 				s.Close()
 			}
@@ -298,12 +307,21 @@ func (n *Node) sleep(d time.Duration) bool {
 	}
 }
 
-func (n *Node) dialOnce(o transport.DialOptions) (*mux.Session, string, error) {
+// dialInfo describes a freshly dialed session.
+type dialInfo struct{ Remote, Cipher string }
+
+func (n *Node) dialOnce(o transport.DialOptions) (*mux.Session, dialInfo, error) {
 	ctx, cancel := context.WithTimeout(n.ctx, 20*time.Second)
 	defer cancel()
+	return n.dialWith(ctx, o)
+}
+
+// dialWith opens one transport connection and runs the handshake; ctx
+// bounds the whole attempt.
+func (n *Node) dialWith(ctx context.Context, o transport.DialOptions) (*mux.Session, dialInfo, error) {
 	c, err := transport.Dial(ctx, o)
 	if err != nil {
-		return nil, "", err
+		return nil, dialInfo{}, err
 	}
 	// packet carriers never refuse: a wrong key just goes unanswered, so
 	// abort the handshake as soon as the node shuts down
@@ -315,17 +333,17 @@ func (n *Node) dialOnce(o transport.DialOptions) (*mux.Session, string, error) {
 		case <-done:
 		}
 	}()
-	sc, err := secure.Client(c, n.psk, handshakeTimeout)
+	sc, err := secure.Client(c, n.psk, handshakeTimeout, n.cfg.Cipher)
 	close(done)
 	if err != nil {
 		c.Close()
 		if errors.Is(err, io.EOF) || errors.Is(err, secure.ErrAuth) {
-			return nil, "", fmt.Errorf("handshake rejected: wrong token/key, the port is not mirage, or the two servers' clocks differ by over 2 minutes (check timedatectl): %w", err)
+			return nil, dialInfo{}, fmt.Errorf("handshake rejected: wrong token/key, the port is not mirage, or the two servers' clocks differ by over 2 minutes (check timedatectl): %w", err)
 		}
-		return nil, "", fmt.Errorf("handshake: %w", err)
+		return nil, dialInfo{}, fmt.Errorf("handshake: %w", err)
 	}
 	sc.SetPadding(n.prof.pad)
-	return mux.New(sc, true, n.prof.mux), c.RemoteAddr().String(), nil
+	return mux.New(sc, true, n.prof.mux), dialInfo{Remote: c.RemoteAddr().String(), Cipher: sc.Cipher()}, nil
 }
 
 // drainAndClose closes a rotated session once its streams finish (or after
@@ -366,6 +384,7 @@ type SessionStatus struct {
 	Streams   int     `json:"streams"`
 	AgeSec    int     `json:"age_s"`
 	Draining  bool    `json:"draining"`
+	Cipher    string  `json:"cipher,omitempty"`
 	BytesIn   uint64  `json:"bytes_in"`
 	BytesOut  uint64  `json:"bytes_out"`
 }
@@ -396,7 +415,7 @@ func (n *Node) Snapshot() Status {
 		out.Sessions = append(out.Sessions, SessionStatus{
 			Link: info.Link, Transport: info.Transport, Remote: info.Remote, Dialed: info.Dialed, Backup: info.Backup,
 			RTTms: float64(s.RTT().Microseconds()) / 1000, Streams: s.NumStreams(),
-			AgeSec: int(time.Since(s.CreatedAt).Seconds()), Draining: s.Draining(),
+			AgeSec: int(time.Since(s.CreatedAt).Seconds()), Draining: s.Draining(), Cipher: info.Cipher,
 			BytesIn: s.BytesIn.Load(), BytesOut: s.BytesOut.Load(),
 		})
 	}

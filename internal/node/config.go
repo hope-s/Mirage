@@ -28,6 +28,12 @@ type Config struct {
 	// Profile trades speed against stealth: "speed", "balanced" (default)
 	// or "stealth". See profileFor.
 	Profile string `json:"profile,omitempty"`
+	// Cipher is the session cipher this node asks for when it dials:
+	// aes-256-gcm (default), chacha20-poly1305, or auto.
+	Cipher string `json:"cipher,omitempty"`
+	// Fingerprint is the TLS ClientHello tls/wss links present when this
+	// node dials: chrome (default), firefox, safari, edge, ios, random, go.
+	Fingerprint string `json:"fingerprint,omitempty"`
 
 	// Listen accepts tunnel connections from the other node.
 	Listen []ListenConf `json:"listen,omitempty"`
@@ -46,6 +52,14 @@ type Config struct {
 	// [RotateMin, RotateMax]. 0 disables rotation.
 	RotateMin int `json:"rotate_min,omitempty"`
 	RotateMax int `json:"rotate_max,omitempty"`
+
+	// RefreshHours rebuilds the whole tunnel core every N hours (0 = off),
+	// for routes that slowly degrade until reconnected.
+	RefreshHours int `json:"refresh_hours,omitempty"`
+	// WindowMB caps each stream's receive window ("channel size"); 0
+	// uses the profile's value. KeepaliveS overrides the ping interval.
+	WindowMB   int `json:"window_mb,omitempty"`
+	KeepaliveS int `json:"keepalive_s,omitempty"`
 
 	Status string `json:"status,omitempty"` // 127.0.0.1:7788
 	Debug  bool   `json:"debug,omitempty"`
@@ -85,6 +99,10 @@ type DialConf struct {
 	Disabled  bool     `json:"disabled,omitempty"`
 	// KCP tunes kcp/ftcp links.
 	KCP *transport.KCPOptions `json:"kcp,omitempty"`
+	// CDN is the domain when this link goes through a CDN (ws/wss);
+	// Addrs then hold edge IPs that a scan may replace.
+	CDN        string `json:"cdn,omitempty"`
+	NoAutoScan bool   `json:"no_autoscan,omitempty"`
 }
 
 func kcpOpts(k *transport.KCPOptions) transport.KCPOptions {
@@ -245,6 +263,9 @@ func (c *Config) Validate() error {
 		if err := kcpOpts(d.KCP).Validate(); err != nil {
 			return fmt.Errorf("dial %q: %w", d.Name, err)
 		}
+		if d.CDN != "" && d.Transport != transport.WS && d.Transport != transport.WSS {
+			return fmt.Errorf("dial %q: cdn links must use ws or wss", d.Name)
+		}
 	}
 	if c.Role == RoleKharej && (len(c.Forward) > 0 || len(c.Socks) > 0) {
 		return errors.New("forward/socks are only valid on the iran node")
@@ -284,6 +305,21 @@ func (c *Config) Validate() error {
 	}
 	if c.RotateMin > 0 && c.RotateMin < minRotate {
 		return errors.New("rotate_min must be at least 60 seconds")
+	}
+	if !secure.ValidCipher(c.Cipher) {
+		return errors.New("cipher must be aes-256-gcm, chacha20-poly1305 or auto")
+	}
+	if !transport.ValidFingerprint(c.Fingerprint) {
+		return fmt.Errorf("fingerprint must be one of %v", transport.Fingerprints)
+	}
+	if c.RefreshHours < 0 || c.RefreshHours > 24*30 {
+		return errors.New("refresh_hours must be 0..720")
+	}
+	if c.WindowMB < 0 || c.WindowMB > 64 {
+		return errors.New("window_mb must be 0..64")
+	}
+	if c.KeepaliveS < 0 || c.KeepaliveS > 60 {
+		return errors.New("keepalive_s must be 0..60")
 	}
 	switch c.Profile {
 	case "", "speed", "balanced", "stealth":

@@ -29,15 +29,24 @@ type profile struct {
 //	speed    - no padding, big windows, fast dead-link detection
 //	balanced - pad small records only, 8 MiB windows (default)
 //	stealth  - pad every record, smaller windows, slower keepalives
-func profileFor(name string) profile {
-	switch name {
+func profileFor(cfg *Config) profile {
+	var p profile
+	switch cfg.Profile {
 	case "speed":
-		return profile{pad: secure.PadNone, mux: mux.Config{PingInterval: 3 * time.Second, IdleTimeout: 12 * time.Second, MaxWindow: 16 << 20}}
+		p = profile{pad: secure.PadNone, mux: mux.Config{PingInterval: 3 * time.Second, IdleTimeout: 12 * time.Second, MaxWindow: 16 << 20}}
 	case "stealth":
-		return profile{pad: secure.PadHeavy, mux: mux.Config{PingInterval: 7 * time.Second, IdleTimeout: 28 * time.Second, MaxWindow: 4 << 20}}
+		p = profile{pad: secure.PadHeavy, mux: mux.Config{PingInterval: 7 * time.Second, IdleTimeout: 28 * time.Second, MaxWindow: 4 << 20}}
 	default:
-		return profile{pad: secure.PadLight, mux: mux.Config{PingInterval: 4 * time.Second, IdleTimeout: 16 * time.Second, MaxWindow: 8 << 20}}
+		p = profile{pad: secure.PadLight, mux: mux.Config{PingInterval: 4 * time.Second, IdleTimeout: 16 * time.Second, MaxWindow: 8 << 20}}
 	}
+	if cfg.WindowMB > 0 {
+		p.mux.MaxWindow = cfg.WindowMB << 20
+	}
+	if cfg.KeepaliveS > 0 {
+		p.mux.PingInterval = time.Duration(cfg.KeepaliveS) * time.Second
+		p.mux.IdleTimeout = 4 * p.mux.PingInterval
+	}
+	return p
 }
 
 // ---------- dial links with health checks and autoscaling ----------
@@ -57,11 +66,22 @@ type dialLink struct {
 	min  int
 	max  int
 
-	mu     sync.Mutex
-	slots  []*slot
-	base   time.Duration // best RTT seen recently (link baseline)
-	baseAt time.Time
-	idle   int
+	addrs atomic.Pointer[[]string] // current addresses; replaced live by CDN scans
+
+	mu       sync.Mutex
+	slots    []*slot
+	base     time.Duration // best RTT seen recently (link baseline)
+	baseAt   time.Time
+	idle     int
+	downAt   time.Time // when the link last had no live connection
+	scanning atomic.Bool
+	lastScan time.Time
+}
+
+func (dl *dialLink) opts() transport.DialOptions {
+	d := dl.conf
+	return transport.DialOptions{Kind: d.Transport, Addrs: *dl.addrs.Load(), SNI: d.SNI, Host: d.Host, Path: d.Path,
+		KCP: kcpOpts(d.KCP), Key: dl.n.psk.PacketKey(), Fingerprint: dl.n.cfg.Fingerprint}
 }
 
 func (n *Node) startDialLink(d DialConf) {
@@ -74,8 +94,13 @@ func (n *Node) startDialLink(d DialConf) {
 		hi = min(lo*3, 16)
 	}
 	hi = max(hi, lo)
-	dl := &dialLink{n: n, conf: d, st: n.link(d.Name, "dial", d.Transport, lo), min: lo, max: hi}
+	dl := &dialLink{n: n, conf: d, st: n.link(d.Name, "dial", d.Transport, lo), min: lo, max: hi, downAt: time.Now()}
+	addrs := append([]string(nil), d.Addrs...)
+	dl.addrs.Store(&addrs)
 	dl.st.Min, dl.st.Backup = lo, d.Backup
+	n.linksMu.Lock()
+	n.dials[d.Name] = dl
+	n.linksMu.Unlock()
 	dl.mu.Lock()
 	for i := 0; i < lo; i++ {
 		dl.addSlotLocked()
@@ -116,15 +141,13 @@ func (dl *dialLink) run(sl *slot, idx int) {
 	}
 	backoff := time.Second
 	d := dl.conf
-	opts := transport.DialOptions{Kind: d.Transport, Addrs: d.Addrs, SNI: d.SNI, Host: d.Host, Path: d.Path,
-		KCP: kcpOpts(d.KCP), Key: n.psk.PacketKey()}
 	for n.ctx.Err() == nil {
 		select {
 		case <-sl.stop:
 			return
 		default:
 		}
-		s, remote, err := n.dialOnce(opts)
+		s, di, err := n.dialOnce(dl.opts())
 		if err != nil {
 			dl.st.setErr(err)
 			n.log.debugf("dial %s: %v", d.Name, err)
@@ -142,7 +165,7 @@ func (dl *dialLink) run(sl *slot, idx int) {
 		dl.st.setErr(nil)
 		sl.sess.Store(s)
 		started := time.Now()
-		n.register(s, sessInfo{Link: d.Name, Transport: d.Transport, Remote: remote, Backup: d.Backup, Dialed: true}, dl.st)
+		n.register(s, sessInfo{Link: d.Name, Transport: d.Transport, Remote: di.Remote, Backup: d.Backup, Dialed: true, Cipher: di.Cipher}, dl.st)
 		var expire <-chan time.Time
 		var timer *time.Timer
 		if life := n.lifetime(); life > 0 {
@@ -190,7 +213,11 @@ func (dl *dialLink) run(sl *slot, idx int) {
 	}
 }
 
-var healthEvery = 10 * time.Second
+var (
+	healthEvery   = 10 * time.Second
+	autoScanAfter = 90 * time.Second
+	autoScanEvery = 15 * time.Minute
+)
 
 // manage watches the link: replaces connections whose latency has degraded
 // far beyond the link's baseline (typical of per-flow throttling), and
@@ -261,6 +288,19 @@ func (dl *dialLink) check() {
 				kicked = true // at most one replacement per cycle
 			}
 		}
+	}
+	if len(act) > 0 {
+		dl.downAt = time.Time{}
+	} else if dl.downAt.IsZero() {
+		dl.downAt = time.Now()
+	}
+	// a CDN link that has been down for a while probably sits on edge IPs
+	// that got filtered: look for working ones in the background
+	if dl.conf.CDN != "" && !dl.conf.NoAutoScan && !dl.downAt.IsZero() &&
+		time.Since(dl.downAt) > autoScanAfter && time.Since(dl.lastScan) > autoScanEvery &&
+		dl.scanning.CompareAndSwap(false, true) {
+		dl.lastScan = time.Now()
+		go dl.n.autoScan(dl)
 	}
 	// autoscale
 	switch {

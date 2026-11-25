@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 
+	mrand "math/rand/v2"
+
 	kcp "github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/tcpraw"
 )
@@ -172,7 +174,7 @@ func dialKCP(ctx context.Context, o DialOptions, addr string) (net.Conn, error) 
 			r.c.Close()
 			return nil, err
 		}
-		s, err = kcp.NewConn4(0, ra, block, ko.Data, ko.Parity, true, r.c)
+		s, err = kcp.NewConn4(mrand.Uint32(), ra, block, ko.Data, ko.Parity, true, udpAddrs{r.c})
 		if err != nil {
 			r.c.Close()
 			return nil, err
@@ -185,6 +187,18 @@ func dialKCP(ctx context.Context, o DialOptions, addr string) (net.Conn, error) 
 	}
 	tuneKCP(s, ko)
 	return s, nil
+}
+
+// udpAddrs makes a fake-TCP socket report peers as *net.UDPAddr: kcp-go
+// silently drops packets whose source is any other address type.
+type udpAddrs struct{ net.PacketConn }
+
+func (u udpAddrs) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, a, err := u.PacketConn.ReadFrom(p)
+	if ta, ok := a.(*net.TCPAddr); ok {
+		a = &net.UDPAddr{IP: ta.IP, Port: ta.Port, Zone: ta.Zone}
+	}
+	return n, a, err
 }
 
 // kcpListener adapts a KCP listener (and the fake-TCP socket under it) to
@@ -212,7 +226,7 @@ func listenKCP(o ListenOptions) (net.Listener, error) {
 			return nil, fmt.Errorf("fake tcp (needs linux + root): %w", err)
 		}
 		kl.pc = pc
-		if kl.l, err = kcp.ServeConn(block, ko.Data, ko.Parity, pc); err != nil {
+		if kl.l, err = kcp.ServeConn(block, ko.Data, ko.Parity, udpAddrs{pc}); err != nil {
 			pc.Close()
 			return nil, err
 		}

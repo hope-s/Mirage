@@ -215,6 +215,71 @@ func TestFullFlow(t *testing.T) {
 	if kc.Token == "" || kc.Panel == nil {
 		t.Fatal("kharej token/panel missing")
 	}
+
+	// ---- panel: fonts, settings, kcp edit, link test ----
+	get := func(p string) (int, string) {
+		resp, err := cl.Get(base + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode, resp.Header.Get("Content-Type")
+	}
+	if code, ct := get("/font/vazirmatn.woff2"); code != 200 || ct != "font/woff2" {
+		t.Fatalf("built-in font: %d %s", code, ct)
+	}
+	if code, _ := get("/font/yekan-400"); code != 404 {
+		t.Fatalf("yekan without files should 404, got %d", code)
+	}
+	fontDir := filepath.Join(filepath.Dir(irCfg), "fonts")
+	os.MkdirAll(fontDir, 0o755)
+	os.WriteFile(filepath.Join(fontDir, "IRANYekanX-Regular.woff2"), []byte("wOF2r"), 0o644)
+	os.WriteFile(filepath.Join(fontDir, "IRANYekanX-Bold.woff2"), []byte("wOF2b"), 0o644)
+	os.WriteFile(filepath.Join(fontDir, "IRANYekanX-ExtraBold.woff2"), []byte("wOF2x"), 0o644)
+	for w, want := range map[string]string{"400": "wOF2r", "700": "wOF2b"} {
+		resp, err := cl.Get(base + "/font/yekan-" + w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != want {
+			t.Fatalf("yekan %s served %q", w, body)
+		}
+	}
+	if code, b := call("POST", "/api/settings", map[string]any{"Cipher": "chacha20-poly1305", "Fingerprint": "firefox",
+		"RefreshHours": 12, "WindowMB": 4, "KeepaliveS": 5}); code != 200 {
+		t.Fatalf("settings: %d %s", code, b)
+	}
+	if code, _ := call("POST", "/api/settings", map[string]any{"Fingerprint": "netscape"}); code != 400 {
+		t.Fatal("bad fingerprint accepted")
+	}
+	time.Sleep(300 * time.Millisecond)
+	waitUp(t, ia)
+	mode, fec := "turbo", "8:8"
+	if code, b := call("POST", "/api/link", map[string]any{"Name": "kcp", "KCPMode": &mode, "FEC": &fec}); code != 200 {
+		t.Fatalf("kcp edit: %d %s", code, b)
+	}
+	if code, _ := call("POST", "/api/link", map[string]any{"Name": "tls", "KCPMode": &mode}); code != 400 {
+		t.Fatal("kcp mode on a tls link accepted")
+	}
+	saved, _ = node.LoadConfig(irCfg)
+	var kd *node.DialConf
+	for i := range saved.Dial {
+		if saved.Dial[i].Name == "kcp" {
+			kd = &saved.Dial[i]
+		}
+	}
+	if saved.Cipher != "chacha20-poly1305" || saved.Fingerprint != "firefox" || saved.RefreshHours != 12 ||
+		kd == nil || kd.KCP.Mode != "turbo" || kd.KCP.Data != 8 || kd.KCP.Parity != 8 {
+		t.Fatalf("panel edits not saved: %+v kcp=%+v", saved, kd)
+	}
+	if code, b := call("GET", "/api/cdnlinks", nil); code != 200 || string(bytes.TrimSpace(b)) != "[]" {
+		t.Fatalf("cdnlinks: %d %s", code, b)
+	}
+	if code, _ := call("GET", "/api/config?tunnel=nope", nil); code != 404 {
+		t.Fatal("unknown tunnel should 404")
+	}
 }
 
 func waitUp(t *testing.T, a *app.App) {
@@ -265,4 +330,117 @@ func TestTokenRoundTripAndForwardParsing(t *testing.T) {
 	if fmt.Sprint(f) != fmt.Sprint(want) {
 		t.Fatalf("forwards: %v", f)
 	}
+}
+
+// TestReverseCDNSetup: in reverse mode the CDN domain points at iran, so
+// kharej dials the CDN and iran listens on the origin port.
+func TestReverseCDNSetup(t *testing.T) {
+	quietStdout(t)
+	dir := t.TempDir()
+	khCfg := filepath.Join(dir, "kh.json")
+	irCfg := filepath.Join(dir, "ir.json")
+	origin := freeP(t)
+	err := cmdSetupKharej([]string{"-c", khCfg, "-reverse", "127.0.0.1", "-tls", "", "-tcp", strconv.Itoa(freeP(t)),
+		"-cdn", "t.example.com", "-cdn-origin-port", strconv.Itoa(origin), "-refresh", "6", "-status", "", "-panel=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, err := node.LoadConfig(khCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cdn *node.DialConf
+	for i := range kc.Dial {
+		if kc.Dial[i].Name == "cdn" {
+			cdn = &kc.Dial[i]
+		}
+	}
+	if cdn == nil || cdn.CDN != "t.example.com" || cdn.Transport != "wss" || !cdn.Backup || kc.RefreshHours != 6 {
+		t.Fatalf("kharej cdn dial wrong: %+v refresh=%d", cdn, kc.RefreshHours)
+	}
+	err = cmdSetupIran([]string{"-c", irCfg, "-token", kc.Token, "-forward", strconv.Itoa(freeP(t)), "-status", "", "-panel=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ic, _ := node.LoadConfig(irCfg)
+	found := false
+	for _, l := range ic.Listen {
+		if l.Name == "cdn-"+strconv.Itoa(origin) && l.Transport == "ws" && l.Backup {
+			found = true
+		}
+	}
+	if !found || ic.RefreshHours != 6 {
+		t.Fatalf("iran should listen ws on the origin port: %+v refresh=%d", ic.Listen, ic.RefreshHours)
+	}
+}
+
+// TestMultiTunnel runs a main tunnel and an extra one in the same process
+// on each side, then removes the extra one with a reload.
+func TestMultiTunnel(t *testing.T) {
+	quietStdout(t)
+	dir := t.TempDir()
+	kh := filepath.Join(dir, "kh", "config.json")
+	ir := filepath.Join(dir, "ir", "config.json")
+	khX := filepath.Join(app.TunnelsDir(kh), "second.json")
+	irX := filepath.Join(app.TunnelsDir(ir), "second.json")
+	echo := echoSrv(t)
+	setup := func(khPath, irPath string, extra bool, fwd int) {
+		t.Helper()
+		opt := func() []string {
+			if extra {
+				return []string{"-panel=false", "-status", ""}
+			}
+			return []string{"-status", "127.0.0.1:" + strconv.Itoa(freeP(t))}
+		}
+		if err := cmdSetupKharej(append([]string{"-c", khPath, "-ip", "127.0.0.1", "-tls", "", "-tcp", strconv.Itoa(freeP(t)),
+			"-allow-local", strconv.Itoa(echo)}, opt()...)); err != nil {
+			t.Fatal(err)
+		}
+		kc, _ := node.LoadConfig(khPath)
+		if err := cmdSetupIran(append([]string{"-c", irPath, "-token", kc.Token, "-forward", fmt.Sprintf("%d=%d", fwd, echo)}, opt()...)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fwdMain, fwdX := freeP(t), freeP(t)
+	setup(kh, ir, false, fwdMain)
+	setup(khX, irX, true, fwdX)
+
+	ka, ia := app.New(kh), app.New(ir)
+	for _, a := range []*app.App{ka, ia} {
+		if err := a.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close()
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	up := func() bool {
+		ts := ia.StatusData().Tunnels
+		return len(ts) == 2 && len(ts[0].Sessions) > 0 && len(ts[1].Sessions) > 0
+	}
+	for time.Now().Before(deadline) && !up() {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !up() {
+		t.Fatalf("both tunnels should be up: %+v", ia.StatusData().Tunnels)
+	}
+	if names := ia.TunnelNames(); len(names) != 2 || names[0] != "main" || names[1] != "second" {
+		t.Fatalf("names %v", names)
+	}
+	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwdMain))
+	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwdX))
+
+	if err := os.Remove(irX); err != nil {
+		t.Fatal(err)
+	}
+	if err := ia.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ia.StatusData().Tunnels); n != 1 {
+		t.Fatalf("extra tunnel should be gone, have %d", n)
+	}
+	if c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(fwdX), time.Second); err == nil {
+		c.Close()
+		t.Fatal("removed tunnel's forward still listening")
+	}
+	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwdMain))
 }

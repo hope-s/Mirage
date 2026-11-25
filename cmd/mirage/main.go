@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -21,7 +22,7 @@ import (
 	"mirage/internal/node"
 )
 
-const version = "1.1.0"
+const version = "2.0.0"
 
 const defaultConfig = "/etc/mirage/config.json"
 
@@ -32,10 +33,17 @@ func usage() {
   mirage install                install as a system service (+ BBR tuning)
   mirage setup kharej [flags]   configure the foreign server, prints a pairing token
   mirage setup iran   [flags]   configure the iran server from a pairing token
-  mirage status                 live links and connections
+  mirage status                 live links and connections (all tunnels)
+  mirage tunnel list|add|remove extra tunnels on this server, e.g.
+                                mirage tunnel add de2 iran -token MRG1... -forward 8443=2096
   mirage speedtest              measure tunnel speed (iran)
+  mirage linktest               test every link and recommend settings
+  mirage cfscan [-apply]        find the best Cloudflare edge IPs for CDN links
   mirage panel                  show web panel address and login
   mirage token                  show the pairing token again (kharej)
+  mirage update                 download and install the latest release
+  mirage backup [file]          save all settings (default /root/mirage-backup-DATE.tar.gz)
+  mirage restore FILE           restore settings from a backup and restart
   mirage restart | logs | uninstall
   mirage run [-c file]          run in the foreground (used by the service)
   mirage check [-c file]        validate a config
@@ -77,6 +85,12 @@ func main() {
 		err = cmdStatus(args)
 	case "speedtest":
 		err = cmdSpeedtest(args)
+	case "tunnel", "tunnels":
+		err = cmdTunnel(args)
+	case "linktest":
+		err = cmdLinktest(args)
+	case "cfscan":
+		err = cmdCFScan(args)
 	case "check":
 		err = cmdCheck(args)
 	case "token":
@@ -85,6 +99,12 @@ func main() {
 		err = cmdPanel(args)
 	case "install":
 		err = cmdInstall()
+	case "update":
+		err = cmdUpdate(args)
+	case "backup":
+		err = cmdBackup(args)
+	case "restore":
+		err = cmdRestore(args)
 	case "uninstall":
 		err = cmdUninstall()
 	case "restart":
@@ -249,6 +269,21 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Printf("Mirage %s  role=%s  profile=%s  up=%s  mem=%.0fMB  traffic: in %.2f / out %.2f Mbps\n\n",
 		st.Version, st.Role, st.Profile, (time.Duration(st.UptimeS) * time.Second).String(), st.MemMB, in, out)
+	tunnels := st.Tunnels
+	if len(tunnels) == 0 {
+		tunnels = []app.TunnelStatus{{Name: app.MainTunnel, Status: st.Status}}
+	}
+	for _, t := range tunnels {
+		if len(tunnels) > 1 {
+			fmt.Printf("%s== tunnel %s (%s, %s) ==%s\n", cBold, t.Name, t.Role, t.Profile, cReset)
+		}
+		printTunnel(t.Status)
+		fmt.Println()
+	}
+	return nil
+}
+
+func printTunnel(st node.Status) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "LINK\tKIND\tTRANSPORT\tUP\tNOTE")
 	for _, l := range st.Links {
@@ -267,7 +302,7 @@ func cmdStatus(args []string) error {
 	tw.Flush()
 	fmt.Println()
 	tw = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "LINK\tREMOTE\tRTT\tSTREAMS\tAGE\tIN\tOUT\tSTATE")
+	fmt.Fprintln(tw, "LINK\tREMOTE\tRTT\tCIPHER\tSTREAMS\tAGE\tIN\tOUT\tSTATE")
 	for _, s := range st.Sessions {
 		state := "active"
 		if s.Draining {
@@ -277,20 +312,20 @@ func cmdStatus(args []string) error {
 		if s.RTTms > 0 {
 			rtt = fmt.Sprintf("%.0fms", s.RTTms)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", s.Link, s.Remote, rtt, s.Streams,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", s.Link, s.Remote, rtt, s.Cipher, s.Streams,
 			(time.Duration(s.AgeSec) * time.Second).String(), human(s.BytesIn), human(s.BytesOut), state)
 	}
 	tw.Flush()
 	if len(st.Sessions) == 0 {
 		fmt.Println("(no live connections yet)")
 	}
-	return nil
 }
 
 func cmdSpeedtest(args []string) error {
 	fs := flag.NewFlagSet("speedtest", flag.ExitOnError)
 	cfgPath := configFlag(fs)
 	secs := fs.Int("t", 6, "seconds per direction")
+	tunnel := fs.String("tunnel", "", "tunnel to test (default: main)")
 	_ = fs.Parse(args)
 	u, err := statusURL(*cfgPath)
 	if err != nil {
@@ -298,7 +333,7 @@ func cmdSpeedtest(args []string) error {
 	}
 	fmt.Printf("testing download and upload through the tunnel (%ds each)...\n", *secs)
 	cl := http.Client{Timeout: time.Duration(*secs*2+30) * time.Second}
-	resp, err := cl.Post(u+"/speedtest?d="+strconv.Itoa(*secs), "application/json", nil)
+	resp, err := cl.Post(u+"/speedtest?d="+strconv.Itoa(*secs)+"&tunnel="+url.QueryEscape(*tunnel), "application/json", nil)
 	if err != nil {
 		return fmt.Errorf("service not reachable: %w", err)
 	}

@@ -27,6 +27,7 @@ type sessInfo struct {
 	Remote    string
 	Backup    bool
 	Dialed    bool
+	Cipher    string
 }
 
 // Pool holds the iran node's live sessions and picks one per new stream.
