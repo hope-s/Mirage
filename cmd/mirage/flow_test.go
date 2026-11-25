@@ -112,7 +112,10 @@ func TestFullFlow(t *testing.T) {
 	// ---- web panel ----
 	pc := ic.Panel
 	_, port, _ := net.SplitHostPort(pc.Listen)
-	base := "https://127.0.0.1:" + port + pc.Path
+	if pc.TLS {
+		t.Fatal("panel should default to plain HTTP")
+	}
+	base := "http://127.0.0.1:" + port + pc.Path
 	jar, _ := cookiejar.New(nil)
 	cl := &http.Client{Jar: jar, Timeout: 30 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
@@ -133,7 +136,7 @@ func TestFullFlow(t *testing.T) {
 		return resp.StatusCode, b
 	}
 	// wrong secret path looks like nginx 404
-	resp, err := cl.Get("https://127.0.0.1:" + port + "/")
+	resp, err := cl.Get("http://127.0.0.1:" + port + "/")
 	if err != nil {
 		t.Fatal(err)
 	}

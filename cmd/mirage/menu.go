@@ -107,7 +107,16 @@ func menu() error {
 		case "7":
 			err = cmdCFScan([]string{"-apply=" + strconv.FormatBool(askYN("switch the link to the best IPs found?", true))})
 		case "8":
-			err = cmdPanel(nil)
+			if err = cmdPanel(nil); err == nil {
+				switch ask("\n  1) switch to HTTP   2) switch to HTTPS   3) new password   Enter) back", "") {
+				case "1":
+					err = cmdPanel([]string{"-http"})
+				case "2":
+					err = cmdPanel([]string{"-https"})
+				case "3":
+					err = cmdPanel([]string{"-reset-password"})
+				}
+			}
 		case "9":
 			err = cmdToken(nil)
 		case "10":

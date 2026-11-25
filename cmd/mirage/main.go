@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -22,7 +23,7 @@ import (
 	"mirage/internal/node"
 )
 
-const version = "2.0.0"
+const version = "2.0.1"
 
 const defaultConfig = "/etc/mirage/config.json"
 
@@ -39,7 +40,7 @@ func usage() {
   mirage speedtest              measure tunnel speed (iran)
   mirage linktest               test every link and recommend settings
   mirage cfscan [-apply]        find the best Cloudflare edge IPs for CDN links
-  mirage panel                  show web panel address and login
+  mirage panel [-http|-https]   show web panel address and login (or switch protocol)
   mirage token                  show the pairing token again (kharej)
   mirage update                 download and install the latest release
   mirage backup [file]          save all settings (default /root/mirage-backup-DATE.tar.gz)
@@ -203,12 +204,53 @@ func cmdToken(args []string) error {
 func cmdPanel(args []string) error {
 	fs := flag.NewFlagSet("panel", flag.ExitOnError)
 	cfgPath := configFlag(fs)
+	toHTTP := fs.Bool("http", false, "switch the panel to plain HTTP")
+	toHTTPS := fs.Bool("https", false, "switch the panel to HTTPS (self-signed certificate)")
+	newPass := fs.Bool("reset-password", false, "set a new random panel password")
 	_ = fs.Parse(args)
 	cfg, err := node.LoadConfig(*cfgPath)
 	if err != nil {
 		return err
 	}
+	if cfg.Panel == nil {
+		return errors.New("the panel is disabled in this config")
+	}
+	if *toHTTP || *toHTTPS || *newPass {
+		if *toHTTP || *toHTTPS {
+			cfg.Panel.TLS = *toHTTPS
+		}
+		if *newPass {
+			cfg.Panel.Pass = randHex(8)
+		}
+		if err := cfg.Save(*cfgPath); err != nil {
+			return err
+		}
+		if err := reloadRunning(*cfgPath); err != nil {
+			fmt.Println("saved; restart the service to apply:", err)
+		} else {
+			fmt.Println("✓ applied")
+		}
+	}
 	printPanel(cfg, "")
+	return nil
+}
+
+// reloadRunning asks the running service to re-read its config.
+func reloadRunning(cfgPath string) error {
+	u, err := statusURL(cfgPath)
+	if err != nil {
+		return err
+	}
+	cl := http.Client{Timeout: 30 * time.Second}
+	resp, err := cl.Post(u+"/reload", "application/json", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return errors.New(strings.TrimSpace(string(b)))
+	}
 	return nil
 }
 

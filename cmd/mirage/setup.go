@@ -189,7 +189,7 @@ func outboundIP() string {
 	return c.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
-func newPanel(enabled bool) *node.PanelConf {
+func newPanel(enabled, https bool) *node.PanelConf {
 	if !enabled {
 		return nil
 	}
@@ -198,7 +198,7 @@ func newPanel(enabled bool) *node.PanelConf {
 		Path:   "/" + randHex(6),
 		User:   "admin",
 		Pass:   randHex(8),
-		TLS:    true,
+		TLS:    https,
 	}
 }
 
@@ -285,6 +285,7 @@ func cmdSetupKharej(args []string) error {
 	fingerprint := fs.String("fingerprint", "chrome", "TLS fingerprint for tls/wss links: chrome | firefox | safari | edge | ios | random | go")
 	cipherName := fs.String("cipher", "auto", "session cipher: aes-256-gcm | chacha20-poly1305 | auto (chacha20 on CPUs without AES acceleration)")
 	panel := fs.Bool("panel", true, "enable the web panel")
+	panelHTTPS := fs.Bool("panel-https", false, "serve the panel over HTTPS (self-signed) instead of plain HTTP")
 	status := fs.String("status", "127.0.0.1:7788", "local status address (empty to disable)")
 	out := fs.String("c", defaultConfig, "where to write the config")
 	force := fs.Bool("force", false, "overwrite an existing config")
@@ -343,7 +344,7 @@ func cmdSetupKharej(args []string) error {
 	cfg := &node.Config{
 		Role: node.RoleKharej, Key: hex.EncodeToString(psk[:]), Profile: *profile,
 		RotateMin: rmin, RotateMax: rmax, Status: *status, AllowLocal: splitList(*allow),
-		Panel: newPanel(*panel), RefreshHours: *refresh, Cipher: *cipherName, Fingerprint: *fingerprint,
+		Panel: newPanel(*panel, *panelHTTPS), RefreshHours: *refresh, Cipher: *cipherName, Fingerprint: *fingerprint,
 	}
 	tk := token{V: 1, Key: cfg.Key, Rotate: [2]int{rmin, rmax}, Profile: *profile, Refresh: *refresh, Cipher: *cipherName, FP: *fingerprint}
 
@@ -517,6 +518,7 @@ func cmdSetupIran(args []string) error {
 	conns := fs.Int("conns", 0, "override minimum parallel connections per link")
 	profile := fs.String("profile", "", "override the profile from the token: speed | balanced | stealth")
 	panel := fs.Bool("panel", true, "enable the web panel")
+	panelHTTPS := fs.Bool("panel-https", false, "serve the panel over HTTPS (self-signed) instead of plain HTTP")
 	status := fs.String("status", "127.0.0.1:7788", "local status address (empty to disable)")
 	out := fs.String("c", defaultConfig, "where to write the config")
 	force := fs.Bool("force", false, "overwrite an existing config")
@@ -535,7 +537,7 @@ func cmdSetupIran(args []string) error {
 		prof = *profile
 	}
 	cfg := &node.Config{Role: node.RoleIran, Key: t.Key, Status: *status, Profile: prof,
-		RotateMin: t.Rotate[0], RotateMax: t.Rotate[1], Panel: newPanel(*panel), RefreshHours: t.Refresh, Cipher: t.Cipher, Fingerprint: t.FP}
+		RotateMin: t.Rotate[0], RotateMax: t.Rotate[1], Panel: newPanel(*panel, *panelHTTPS), RefreshHours: t.Refresh, Cipher: t.Cipher, Fingerprint: t.FP}
 	dir := filepath.Dir(*out)
 	var listenPorts []string
 	for _, l := range t.Links {
