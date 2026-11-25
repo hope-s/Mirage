@@ -18,6 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make test
+      - name: fake-tcp test (needs root)
+        run: sudo -E env "PATH=$PATH" go test -count=1 -run TestFakeTCP -v ./internal/node
       - run: make release
       - uses: softprops/action-gh-release@v2
         with:

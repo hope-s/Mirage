@@ -17,6 +17,7 @@ import (
 
 	"mirage/internal/node"
 	"mirage/internal/secure"
+	"mirage/internal/transport"
 )
 
 // ---------- pairing token ----------
@@ -33,6 +34,8 @@ type tokenLink struct {
 	Path   string   `json:"p,omitempty"`
 	Conns  int      `json:"c,omitempty"`
 	Backup bool     `json:"b,omitempty"`
+
+	KCP *transport.KCPOptions `json:"k,omitempty"`
 }
 
 type token struct {
@@ -127,6 +130,39 @@ func portFree(p int) bool {
 	}
 	l.Close()
 	return true
+}
+
+// udpFree reports whether a UDP port can be bound on this machine.
+func udpFree(p int) bool {
+	c, err := net.ListenPacket("udp", ":"+strconv.Itoa(p))
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
+
+// kindPortFree checks the port in the protocol the transport binds.
+func kindPortFree(kind string, p int) bool {
+	if kind == transport.KCP {
+		return udpFree(p)
+	}
+	return portFree(p)
+}
+
+// parseFEC parses "10:3" (data:parity shards); "0" or "" disables FEC.
+func parseFEC(s string) (int, int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" || s == "off" {
+		return 0, 0, nil
+	}
+	a, b, ok := strings.Cut(s, ":")
+	d, err1 := strconv.Atoi(a)
+	p, err2 := strconv.Atoi(b)
+	if !ok || err1 != nil || err2 != nil || d < 1 || p < 1 {
+		return 0, 0, errors.New("fec must look like 10:3 (data:parity) or 0 to disable")
+	}
+	return d, p, nil
 }
 
 func freeRandomPort() int {
@@ -225,6 +261,11 @@ func cmdSetupKharej(args []string) error {
 	tlsPorts := fs.String("tls", "443", "TLS ports, comma separated (empty to disable)")
 	wsPorts := fs.String("ws", "", "WebSocket ports (plain HTTP)")
 	wssPorts := fs.String("wss", "", "WebSocket-over-TLS ports")
+	kcpPorts := fs.String("kcp", "", "KCP over UDP ports: best on links with packet loss")
+	ftcpPorts := fs.String("ftcp", "", "KCP over fake-TCP ports (linux + root on both servers): for links where UDP is blocked and TCP collapses under loss")
+	kcpMode := fs.String("kcp-mode", "fast2", "kcp/ftcp speed preset: normal | fast | fast2 | fast3 | turbo")
+	fec := fs.String("fec", "10:3", "kcp/ftcp forward error correction data:parity shards; 0 to disable")
+	kcpCrypt := fs.String("kcp-crypt", "aes", "kcp/ftcp packet obfuscation: aes | aes-128 | salsa20 | none")
 	backups := fs.String("backup", "", "transports used only when the others fail, e.g. ws,wss (cdn is always backup)")
 	sni := fs.String("sni", "www.bing.com", "TLS server name shown on the wire")
 	path := fs.String("path", "", "WebSocket path (default: random)")
@@ -266,6 +307,14 @@ func cmdSetupKharej(args []string) error {
 	if err != nil {
 		return err
 	}
+	fd, fp, err := parseFEC(*fec)
+	if err != nil {
+		return err
+	}
+	kcpOpt := transport.KCPOptions{Mode: *kcpMode, Data: fd, Parity: fp, Crypt: *kcpCrypt}
+	if err := kcpOpt.Validate(); err != nil {
+		return err
+	}
 	if *path == "" {
 		*path = "/api/" + randHex(6)
 	}
@@ -291,7 +340,7 @@ func cmdSetupKharej(args []string) error {
 	kinds := []struct {
 		kind  string
 		ports string
-	}{{"tls", *tlsPorts}, {"tcp", *tcpPorts}, {"ws", *wsPorts}, {"wss", *wssPorts}}
+	}{{"tls", *tlsPorts}, {"tcp", *tcpPorts}, {"kcp", *kcpPorts}, {"ftcp", *ftcpPorts}, {"ws", *wsPorts}, {"wss", *wssPorts}}
 	usedPorts := map[int]string{}
 	for _, k := range kinds {
 		ports, err := parsePorts(k.ports)
@@ -306,11 +355,16 @@ func cmdSetupKharej(args []string) error {
 				return fmt.Errorf("port %d used by both %s and %s", p, other, k.kind)
 			}
 			usedPorts[p] = k.kind
-			if direct && !*noPortCheck && !portFree(p) {
+			if direct && !*noPortCheck && !kindPortFree(k.kind, p) {
 				return fmt.Errorf("port %d is already in use on this server (X-UI?). choose another, e.g. -%s %d", p, k.kind, p+1)
 			}
 		}
 		tl := tokenLink{Name: k.kind, T: k.kind, Conns: *conns, Backup: isBackup[k.kind]}
+		var ko *transport.KCPOptions
+		if transport.IsPacket(k.kind) {
+			o := kcpOpt
+			ko, tl.KCP = &o, &o
+		}
 		if k.kind == "tls" || k.kind == "wss" {
 			tl.SNI = *sni
 		}
@@ -324,7 +378,7 @@ func cmdSetupKharej(args []string) error {
 				tl.Addrs = append(tl.Addrs, net.JoinHostPort(*ip, strconv.Itoa(p)))
 				lc := node.ListenConf{
 					Name: fmt.Sprintf("%s-%d", k.kind, p), Transport: k.kind,
-					Addr: ":" + strconv.Itoa(p), SNI: *sni, Path: *path, Fallback: *fallback,
+					Addr: ":" + strconv.Itoa(p), SNI: *sni, Path: *path, Fallback: *fallback, KCP: ko,
 				}
 				if k.kind == "tls" || k.kind == "wss" {
 					lc.Cert = filepath.Join(dir, "cert.pem")
@@ -335,7 +389,7 @@ func cmdSetupKharej(args []string) error {
 		} else {
 			tl.Mode = "r"
 			dc := node.DialConf{Name: k.kind, Transport: k.kind, SNI: tl.SNI, Host: tl.Host, Path: tl.Path,
-				Conns: *conns, Backup: tl.Backup}
+				Conns: *conns, Backup: tl.Backup, KCP: ko}
 			for _, p := range ports {
 				tl.Addrs = append(tl.Addrs, ":"+strconv.Itoa(p))
 				dc.Addrs = append(dc.Addrs, net.JoinHostPort(*reverse, strconv.Itoa(p)))
@@ -370,7 +424,7 @@ func cmdSetupKharej(args []string) error {
 		})
 	}
 	if len(tk.Links) == 0 {
-		return errors.New("no transport enabled; set at least one of -tcp -tls -ws -wss -cdn")
+		return errors.New("no transport enabled; set at least one of -tcp -tls -kcp -ftcp -ws -wss -cdn")
 	}
 	allBackup := true
 	for _, l := range tk.Links {
@@ -395,6 +449,12 @@ func cmdSetupKharej(args []string) error {
 	}
 	fmt.Printf("\n===== PAIRING TOKEN (copy all of it to the iran server) =====\n%s\n=============================================================\n\n", t)
 	printPanel(cfg, *ip)
+	if *kcpPorts != "" {
+		fmt.Printf("\nnote: kcp uses UDP - open UDP port(s) %s in this server's firewall\n", *kcpPorts)
+	}
+	if *ftcpPorts != "" {
+		fmt.Println("\nnote: ftcp needs root and iptables on BOTH servers (linux only)")
+	}
 	if len(cfg.AllowLocal) == 0 {
 		fmt.Println("\nnote: no -allow-local ports. Port forwards to services on THIS server (e.g. an X-UI inbound on 2096)")
 		fmt.Println("      are blocked until you add them (flag, panel, or config).")
@@ -463,13 +523,13 @@ func cmdSetupIran(args []string) error {
 		switch l.Mode {
 		case "d":
 			cfg.Dial = append(cfg.Dial, node.DialConf{Name: l.Name, Transport: l.T, Addrs: l.Addrs,
-				SNI: l.SNI, Host: l.Host, Path: l.Path, Conns: c, Backup: l.Backup})
+				SNI: l.SNI, Host: l.Host, Path: l.Path, Conns: c, Backup: l.Backup, KCP: l.KCP})
 		case "r":
 			for _, a := range l.Addrs {
 				_, port, _ := net.SplitHostPort(a)
-				listenPorts = append(listenPorts, port)
+				listenPorts = append(listenPorts, l.T+":"+port)
 				lc := node.ListenConf{Name: l.Name + "-" + port, Transport: l.T, Addr: a,
-					SNI: l.SNI, Path: l.Path, Backup: l.Backup}
+					SNI: l.SNI, Path: l.Path, Backup: l.Backup, KCP: l.KCP}
 				if l.T == "tls" || l.T == "wss" {
 					lc.Cert = filepath.Join(dir, "cert.pem")
 					lc.CertKey = filepath.Join(dir, "key.pem")
@@ -525,9 +585,10 @@ func cmdSetupIran(args []string) error {
 				return err
 			}
 		}
-		for _, p := range listenPorts {
-			if err := check(":" + p); err != nil {
-				return err
+		for _, lp := range listenPorts {
+			kind, p, _ := strings.Cut(lp, ":")
+			if n, _ := strconv.Atoi(p); n > 0 && !kindPortFree(kind, n) {
+				return fmt.Errorf("port %d is already in use on this server", n)
 			}
 		}
 	}
@@ -542,7 +603,7 @@ func cmdSetupIran(args []string) error {
 		fmt.Printf("  socks5 %s   (X-UI outbound: socks, address %s)\n", s.Listen, s.Listen)
 	}
 	if len(listenPorts) > 0 {
-		fmt.Printf("  reverse mode: kharej will connect to this server on port(s) %s - open them in the firewall\n", strings.Join(listenPorts, ","))
+		fmt.Printf("  reverse mode: kharej will connect to this server on %s - open them in the firewall\n", strings.Join(listenPorts, ", "))
 	}
 	fmt.Println()
 	printPanel(cfg, "")

@@ -145,7 +145,7 @@ func pair(t *testing.T, reverse bool, kinds []string) (*Config, *Config, int) {
 	return kh, ir, fp
 }
 
-var allKinds = []string{"tcp", "tls", "ws", "wss"}
+var allKinds = []string{"tcp", "tls", "ws", "wss", "kcp"}
 
 func TestDirectAllTransports(t *testing.T) {
 	for _, kind := range allKinds {

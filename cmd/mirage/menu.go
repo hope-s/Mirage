@@ -156,8 +156,15 @@ func wizardKharej() error {
 	tlsDef := strconv.Itoa(firstFree(443, 2053, 2083, 8443))
 	tls := ask("  TLS ports (looks like HTTPS)", tlsDef)
 	tcp := ask("  raw TCP ports (fastest)", strconv.Itoa(firstFree(8880, 2095, 9443)))
+	kcp := ask("  KCP/UDP ports (best when packets get lost)", "")
+	ftcp := ask("  fake-TCP ports (linux root on both; when UDP is blocked)", "")
 	ws := ask("  WebSocket ports (plain, works through more filters)", "")
-	args = append(args, "-tls", tls, "-tcp", tcp, "-ws", ws)
+	args = append(args, "-tls", tls, "-tcp", tcp, "-kcp", kcp, "-ftcp", ftcp, "-ws", ws)
+	if kcp != "" || ftcp != "" {
+		fmt.Println("  KCP speed: normal < fast < fast2 < fast3 < turbo (faster = lower ping on bad links, more bandwidth)")
+		args = append(args, "-kcp-mode", ask("  KCP speed", "fast2"))
+		args = append(args, "-fec", ask("  error correction data:parity (more parity = survives more loss; 0 = off)", "10:3"))
+	}
 	if cdn := ask("  CDN domain proxied by Cloudflare (optional backup)", ""); cdn != "" {
 		args = append(args, "-cdn", cdn, "-cdn-origin-port", ask("  origin port on this server for the CDN", "80"))
 	}

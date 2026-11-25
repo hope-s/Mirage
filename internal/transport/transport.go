@@ -4,6 +4,8 @@
 //	tls  - TLS 1.2/1.3 that looks like an HTTPS server to probes
 //	ws   - WebSocket over plain HTTP (CDN origin / port 80 / 8080)
 //	wss  - WebSocket over TLS (direct, or through a CDN such as Cloudflare)
+//	kcp  - KCP over UDP, for lossy links (see kcp.go)
+//	ftcp - KCP over fake TCP packets (see kcp.go)
 //
 // Listeners hand back connections that have not been authenticated yet; the
 // caller runs the secure handshake and, on failure, calls Reject so that
@@ -47,7 +49,7 @@ const (
 // Valid reports whether kind is a known transport.
 func Valid(kind string) bool {
 	switch kind {
-	case TCP, TLS, WS, WSS:
+	case TCP, TLS, WS, WSS, KCP, FTCP:
 		return true
 	}
 	return false
@@ -56,10 +58,12 @@ func Valid(kind string) bool {
 // DialOptions describes how to reach the other side.
 type DialOptions struct {
 	Kind  string
-	Addrs []string // host:port, one picked at random per connection
-	SNI   string   // TLS server name (tls/wss)
-	Host  string   // HTTP Host header (ws/wss); defaults to SNI or addr host
-	Path  string   // WebSocket path
+	Addrs []string   // host:port, one picked at random per connection
+	SNI   string     // TLS server name (tls/wss)
+	Host  string     // HTTP Host header (ws/wss); defaults to SNI or addr host
+	Path  string     // WebSocket path
+	KCP   KCPOptions // kcp/ftcp tuning
+	Key   []byte     // packet obfuscation key (kcp/ftcp)
 }
 
 // Dial opens one transport connection.
@@ -68,6 +72,9 @@ func Dial(ctx context.Context, o DialOptions) (net.Conn, error) {
 		return nil, errors.New("transport: no address")
 	}
 	addr := o.Addrs[mrand.IntN(len(o.Addrs))]
+	if IsPacket(o.Kind) {
+		return dialKCP(ctx, o, addr)
+	}
 	d := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	raw, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
@@ -138,9 +145,11 @@ type ListenOptions struct {
 	Addr     string // :443
 	CertFile string
 	KeyFile  string
-	SNI      string // used as CN for an auto-generated certificate
-	Path     string // WebSocket path (ws/wss)
-	Fallback string // host:port of a real web server for probes; optional
+	SNI      string     // used as CN for an auto-generated certificate
+	Path     string     // WebSocket path (ws/wss)
+	Fallback string     // host:port of a real web server for probes; optional
+	KCP      KCPOptions // kcp/ftcp tuning
+	Key      []byte     // packet obfuscation key (kcp/ftcp)
 }
 
 // Listener yields unauthenticated transport connections.
@@ -158,7 +167,13 @@ func Listen(o ListenOptions) (*Listener, error) {
 	if !Valid(o.Kind) {
 		return nil, fmt.Errorf("transport: unknown kind %q", o.Kind)
 	}
-	ln, err := net.Listen("tcp", o.Addr)
+	var ln net.Listener
+	var err error
+	if IsPacket(o.Kind) {
+		ln, err = listenKCP(o)
+	} else {
+		ln, err = net.Listen("tcp", o.Addr)
+	}
 	if err != nil {
 		return nil, err
 	}

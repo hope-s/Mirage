@@ -60,9 +60,10 @@ func TestFullFlow(t *testing.T) {
 	khCfg := filepath.Join(dir, "kh", "config.json")
 	irCfg := filepath.Join(dir, "ir", "config.json")
 	echo := echoSrv(t)
-	pTLS, pTCP, pWS := freeP(t), freeP(t), freeP(t)
+	pTLS, pTCP, pWS, pKCP := freeP(t), freeP(t), freeP(t), freeP(t)
 	err := cmdSetupKharej([]string{"-c", khCfg, "-ip", "127.0.0.1",
 		"-tls", strconv.Itoa(pTLS), "-tcp", strconv.Itoa(pTCP), "-ws", strconv.Itoa(pWS), "-backup", "ws",
+		"-kcp", strconv.Itoa(pKCP), "-kcp-mode", "fast3", "-fec", "10:4",
 		"-allow-local", strconv.Itoa(echo), "-status", "127.0.0.1:" + strconv.Itoa(freeP(t)), "-profile", "speed"})
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +80,13 @@ func TestFullFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	ic, _ := node.LoadConfig(irCfg)
-	if ic.Profile != "speed" || len(ic.Dial) != 3 {
+	if ic.Profile != "speed" || len(ic.Dial) != 4 {
 		t.Fatalf("token not applied: %+v", ic)
+	}
+	for _, d := range ic.Dial {
+		if d.Transport == "kcp" && (d.KCP == nil || d.KCP.Mode != "fast3" || d.KCP.Data != 10 || d.KCP.Parity != 4) {
+			t.Fatalf("kcp options not carried by the token: %+v", d.KCP)
+		}
 	}
 
 	ka := app.New(khCfg)
@@ -95,11 +101,11 @@ func TestFullFlow(t *testing.T) {
 	defer ia.Close()
 
 	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) && len(ia.StatusData().Sessions) < 4 {
+	for time.Now().Before(deadline) && len(ia.StatusData().Sessions) < 6 {
 		time.Sleep(100 * time.Millisecond)
 	}
-	if n := len(ia.StatusData().Sessions); n < 4 {
-		t.Fatalf("expected tls+tcp+ws sessions, got %d", n)
+	if n := len(ia.StatusData().Sessions); n < 6 {
+		t.Fatalf("expected tls+tcp+kcp+ws sessions, got %d", n)
 	}
 	roundTrip(t, "127.0.0.1:"+strconv.Itoa(fwd))
 

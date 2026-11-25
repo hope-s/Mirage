@@ -102,6 +102,7 @@ func (n *Node) Start() (err error) {
 		tl, err := transport.Listen(transport.ListenOptions{
 			Kind: l.Transport, Addr: l.Addr, CertFile: l.Cert, KeyFile: l.CertKey,
 			SNI: l.SNI, Path: l.Path, Fallback: l.Fallback,
+			KCP: kcpOpts(l.KCP), Key: n.psk.PacketKey(),
 		})
 		if err != nil {
 			return fmt.Errorf("listen %s (%s %s): %w", l.Name, l.Transport, l.Addr, err)
@@ -304,7 +305,18 @@ func (n *Node) dialOnce(o transport.DialOptions) (*mux.Session, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// packet carriers never refuse: a wrong key just goes unanswered, so
+	// abort the handshake as soon as the node shuts down
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.Close()
+		case <-done:
+		}
+	}()
 	sc, err := secure.Client(c, n.psk, handshakeTimeout)
+	close(done)
 	if err != nil {
 		c.Close()
 		if errors.Is(err, io.EOF) || errors.Is(err, secure.ErrAuth) {

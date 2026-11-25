@@ -69,6 +69,10 @@ func NewPSK() (PSK, error) {
 	return k, err
 }
 
+// PacketKey derives the key that obfuscates packet carriers (kcp/ftcp). It
+// is separate from the session keys, which come from the handshake.
+func (k PSK) PacketKey() []byte { return derive(k[:], nil, "mirage packet obfuscation v1", 32) }
+
 func derive(secret, salt []byte, info string, n int) []byte {
 	out, err := hkdf.Key(sha256.New, secret, salt, info, n)
 	if err != nil {

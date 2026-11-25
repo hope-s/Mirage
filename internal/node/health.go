@@ -116,7 +116,8 @@ func (dl *dialLink) run(sl *slot, idx int) {
 	}
 	backoff := time.Second
 	d := dl.conf
-	opts := transport.DialOptions{Kind: d.Transport, Addrs: d.Addrs, SNI: d.SNI, Host: d.Host, Path: d.Path}
+	opts := transport.DialOptions{Kind: d.Transport, Addrs: d.Addrs, SNI: d.SNI, Host: d.Host, Path: d.Path,
+		KCP: kcpOpts(d.KCP), Key: n.psk.PacketKey()}
 	for n.ctx.Err() == nil {
 		select {
 		case <-sl.stop:

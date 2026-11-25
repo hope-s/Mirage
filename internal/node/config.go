@@ -67,6 +67,8 @@ type ListenConf struct {
 	Path      string `json:"path,omitempty"`
 	Fallback  string `json:"fallback,omitempty"`
 	Backup    bool   `json:"backup,omitempty"`
+	// KCP tunes kcp/ftcp links.
+	KCP *transport.KCPOptions `json:"kcp,omitempty"`
 }
 
 // DialConf is an outgoing tunnel link.
@@ -81,6 +83,15 @@ type DialConf struct {
 	MaxConns  int      `json:"max_conns,omitempty"` // autoscale ceiling (default 3x conns, max 16)
 	Backup    bool     `json:"backup,omitempty"`
 	Disabled  bool     `json:"disabled,omitempty"`
+	// KCP tunes kcp/ftcp links.
+	KCP *transport.KCPOptions `json:"kcp,omitempty"`
+}
+
+func kcpOpts(k *transport.KCPOptions) transport.KCPOptions {
+	if k == nil {
+		return transport.KCPOptions{}
+	}
+	return *k
 }
 
 // PanelConf configures the web management panel.
@@ -199,6 +210,9 @@ func (c *Config) Validate() error {
 		if (l.Transport == transport.WS || l.Transport == transport.WSS) && l.Path != "" && !strings.HasPrefix(l.Path, "/") {
 			return fmt.Errorf("listen %q: path must start with /", l.Name)
 		}
+		if err := kcpOpts(l.KCP).Validate(); err != nil {
+			return fmt.Errorf("listen %q: %w", l.Name, err)
+		}
 	}
 	for i, d := range c.Dial {
 		if d.Name == "" {
@@ -227,6 +241,9 @@ func (c *Config) Validate() error {
 		}
 		if (d.Transport == transport.WS || d.Transport == transport.WSS) && d.Path != "" && !strings.HasPrefix(d.Path, "/") {
 			return fmt.Errorf("dial %q: path must start with /", d.Name)
+		}
+		if err := kcpOpts(d.KCP).Validate(); err != nil {
+			return fmt.Errorf("dial %q: %w", d.Name, err)
 		}
 	}
 	if c.Role == RoleKharej && (len(c.Forward) > 0 || len(c.Socks) > 0) {
