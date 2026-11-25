@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	"mirage/internal/node"
@@ -107,6 +108,7 @@ type KharejRequest struct {
 
 	TLS, TCP, KCP, FTCP, WS string
 	CDN                     string
+	CDNPort                 int // Full SSL on this Cloudflare HTTPS port; 0 = auto 80+443
 
 	KCPMode, FEC string
 	AllowLocal   string
@@ -150,6 +152,12 @@ func (a *App) SetupKharej(r KharejRequest) (*setup.Result, error) {
 	o := setup.KharejDefaults()
 	o.IP, o.Reverse = r.IP, r.Reverse
 	o.TLS, o.TCP, o.KCP, o.FTCP, o.WS, o.CDN = r.TLS, r.TCP, r.KCP, r.FTCP, r.WS, r.CDN
+	if r.CDN != "" && r.CDNPort != 0 {
+		if !slices.Contains(setup.CFHTTPSPorts, r.CDNPort) {
+			return nil, fmt.Errorf("cdn port %d is not a Cloudflare HTTPS port", r.CDNPort)
+		}
+		o.CDNOriginPort, o.CDNOriginTLS = r.CDNPort, true
+	}
 	if r.WS != "" && (r.TLS != "" || r.TCP != "" || r.KCP != "" || r.FTCP != "") {
 		o.Backup = []string{"ws"}
 	}

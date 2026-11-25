@@ -67,7 +67,7 @@ func cmdSetupKharej(args []string) error {
 	path := fs.String("path", "", "WebSocket path (default: random)")
 	cdn := fs.String("cdn", "", "CDN domain (e.g. t.example.com proxied by Cloudflare) - adds a backup link through the CDN")
 	cdnOrigin := fs.Int("cdn-origin-port", 0, "port the CDN reaches the origin on; 0 = auto (ws on 80 for Flexible SSL and wss on 443 for Full SSL)")
-	cdnOriginTLS := fs.Bool("cdn-origin-tls", false, "with -cdn-origin-port: the CDN talks TLS to the origin (Cloudflare Full SSL)")
+	cdnOriginTLS := fs.Bool("cdn-origin-tls", false, "with -cdn-origin-port: the CDN talks TLS to the origin (Cloudflare Full SSL); on 2053/2083/2087/2096/8443 no Origin Rule is needed")
 	conns := fs.Int("conns", d.Conns, "minimum parallel connections per link (scales up automatically)")
 	allow := fs.String("allow-local", "", "local ports/addresses reachable through the tunnel, e.g. 2096,127.0.0.1:2097 (your X-UI inbound ports)")
 	fallback := fs.String("fallback", "", "send probes to this real web server (host:port) instead of the built-in decoy")

@@ -260,7 +260,12 @@ textarea.code{width:100%;min-height:380px;font:12.5px/1.6 ui-monospace,SFMono-Re
 
           <div class="wsec">مسیر پشتیبان Cloudflare (اختیاری)</div>
           <div class="field"><label>دامنه‌ی CDN</label><input type="text" id="kCdn" class="ltr" placeholder="cdn.example.com">
-            <div class="sm mut" id="kCdnHint">ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند. با SSL حالت Flexible یا Full کار می‌کند (پورت 80 و 443).</div></div>
+            <div class="sm mut" id="kCdnHint">ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند.</div></div>
+          <div class="field"><label>حالت SSL کلودفلر</label><select id="kCdnPort" class="ltr">
+            <option value="0">Flexible / Full — 80 + 443 (auto)</option>
+            <option value="8443">Full — 8443</option><option value="2053">Full — 2053</option>
+            <option value="2083">Full — 2083</option><option value="2087">Full — 2087</option><option value="2096">Full — 2096</option></select>
+            <div class="sm mut">اگر 443 روی سرور مقصد CDN (مثلاً با X-UI یا nginx) پر است، برای Full یکی از پورت‌های دیگر را انتخاب کنید؛ نیازی به Origin Rule نیست. Full strict پشتیبانی نمی‌شود.</div></div>
 
           <div class="wsec">سرویس‌ها و امنیت</div>
           <div class="fields">
@@ -691,7 +696,7 @@ $$(".pick").forEach(b=>b.onclick=()=>{
 $$("#kMode button").forEach(b=>b.onclick=()=>{
   $$("#kMode button").forEach(x=>x.classList.toggle("on",x===b));const rev=b.dataset.v==="reverse";
   $("#kIPf").hidden=rev;$("#kRevf").hidden=!rev;
-  $("#kCdnHint").innerHTML=rev?"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>سرور ایران</b> اشاره می‌کند.":"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند. با SSL حالت Flexible یا Full کار می‌کند (پورت 80 و 443).";
+  $("#kCdnHint").innerHTML=rev?"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>سرور ایران</b> اشاره می‌کند.":"ساب‌دامنه‌ای با ابر نارنجی روشن که به IP <b>همین سرور</b> اشاره می‌کند.";
 });
 function syncTrs(){$$("#kTrs .tr").forEach(r=>r.classList.toggle("off",!r.querySelector("input[type=checkbox]").checked));
   $("#kKcp").hidden=!$$("#kTrs .tr").some(r=>["kcp","ftcp"].includes(r.dataset.k)&&!r.classList.contains("off"))}
@@ -717,7 +722,7 @@ $("#wK").onsubmit=e=>{
   e.preventDefault();const rev=$("#kMode .on").dataset.v==="reverse";const body={};
   $$("#kTrs .tr").forEach(r=>{const on=r.querySelector("input[type=checkbox]").checked;body[r.dataset.k.toUpperCase()]=on?r.querySelector("input[type=text]").value.trim():""});
   if(!body.TLS&&!body.TCP&&!body.KCP&&!body.FTCP&&!body.WS){$("#kErr").textContent="حداقل یک پروتکل را روشن کنید";return}
-  Object.assign(body,{IP:rev?"":$("#kIP").value.trim(),Reverse:rev?$("#kRev").value.trim():"",CDN:$("#kCdn").value.trim(),
+  Object.assign(body,{IP:rev?"":$("#kIP").value.trim(),Reverse:rev?$("#kRev").value.trim():"",CDN:$("#kCdn").value.trim(),CDNPort:+$("#kCdnPort").value,
     KCPMode:$("#kKmode").value,FEC:$("#kFec").value,AllowLocal:$("#kAllow").value.trim(),Profile:$("#kProf").value,
     Cipher:$("#kCipher").value,Fingerprint:$("#kFP").value,Refresh:+$("#kRefresh").value});
   if(rev&&!body.Reverse){$("#kErr").textContent="IP سرور ایران را وارد کنید";return}

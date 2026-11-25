@@ -109,3 +109,61 @@ func TestCDNAutoOrigin(t *testing.T) {
 		t.Fatalf("iran cdn listeners: %+v", ir.Config.Listen)
 	}
 }
+
+func TestCDNFullOnAltPort(t *testing.T) {
+	o := KharejDefaults()
+	o.IP, o.TLS, o.TCP, o.CDN, o.CheckPorts, o.Panel, o.Status = "1.2.3.4", "", strconv.Itoa(freePort(t)), "cdn.example.com", false, nil, ""
+	o.CDNOriginPort, o.CDNOriginTLS = 8443, true
+	res, err := Kharej(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cdn []string
+	for _, l := range res.Config.Listen {
+		if strings.HasPrefix(l.Name, "cdn-") {
+			cdn = append(cdn, l.Name+"/"+l.Transport)
+		}
+	}
+	if len(cdn) != 1 || cdn[0] != "cdn-8443/wss" {
+		t.Fatalf("listeners: %v", cdn)
+	}
+	tk, _ := DecodeToken(res.Token)
+	if l := tk.Links[len(tk.Links)-1]; l.Addrs[0] != "cdn.example.com:8443" {
+		t.Fatalf("direct cdn link should dial the same port: %+v", l)
+	}
+
+	// reverse: kharej dials cloudflare on 8443, iran listens wss on 8443
+	o.IP, o.Reverse = "", "5.6.7.8"
+	res, err = Kharej(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dial node.DialConf
+	for _, d := range res.Config.Dial {
+		if d.Name == "cdn" {
+			dial = d
+		}
+	}
+	if len(dial.Addrs) != 1 || dial.Addrs[0] != "cdn.example.com:8443" {
+		t.Fatalf("reverse cdn dial: %+v", dial)
+	}
+	ir, err := Iran(IranOptions{Token: res.Token, Forward: strconv.Itoa(freePort(t)), CheckPorts: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := false
+	for _, l := range ir.Config.Listen {
+		if l.Name == "cdn-8443" && l.Transport == "wss" && l.Cert != "" {
+			ok = true
+		}
+	}
+	if !ok {
+		t.Fatalf("iran cdn listener: %+v", ir.Config.Listen)
+	}
+
+	// a port the reverse tls link already takes on iran is refused
+	o.TLS = "8443"
+	if _, err := Kharej(o); err == nil {
+		t.Fatal("expected a port conflict")
+	}
+}

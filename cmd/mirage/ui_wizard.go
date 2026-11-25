@@ -188,8 +188,7 @@ func wizardKharej(path string) error {
 			target = "the IRAN server"
 		}
 		fields = append(fields, huh.NewInput().Title("CDN domain").
-			Description("A subdomain with the orange cloud ON in Cloudflare, pointing at "+target+".\n"+
-				"Works with SSL mode Flexible or Full: Mirage listens on 80 and 443.").
+			Description("A subdomain with the orange cloud ON in Cloudflare, pointing at "+target+".").
 			Placeholder("cdn.example.com").Value(&cdnDomain).
 			Validate(func(s string) error {
 				if !strings.Contains(strings.TrimSpace(s), ".") {
@@ -199,6 +198,38 @@ func wizardKharej(path string) error {
 			}))
 	}
 	groups := []*huh.Group{huh.NewGroup(fields...).Title(step(3, 4, "Ports"))}
+	cdnPort := "auto"
+	if has("cdn") {
+		target := "this server"
+		if !direct {
+			target = "the iran server"
+		}
+		opts := []huh.Option[string]{huh.NewOption("auto        Flexible or Full, on ports 80 and 443", "auto")}
+		for _, p := range []int{8443, 2053, 2083, 2087, 2096} {
+			opts = append(opts, huh.NewOption(fmt.Sprintf("Full %-6d when 443 is busy on %s", p, target), strconv.Itoa(p)))
+		}
+		groups = append(groups, huh.NewGroup(
+			huh.NewSelect[string]().Title("Cloudflare SSL mode").
+				Description("Full needs Mirage on the same port Cloudflare is reached on. If 443 is taken\n"+
+					"(X-UI, nginx...), pick another port: no Origin Rule needed. Full strict is not supported.").
+				Options(opts...).Value(&cdnPort).
+				Validate(func(v string) error {
+					p, _ := strconv.Atoi(v)
+					if p == 0 {
+						return nil
+					}
+					for k, used := range map[string]string{"tls": tlsP, "tcp": tcpP, "ftcp": ftcpP, "ws": wsP} {
+						if ps, _ := setup.ParsePorts(used); has(k) && slices.Contains(ps, p) {
+							return fmt.Errorf("port %d is already used by another transport", p)
+						}
+					}
+					if c := check("wss"); c != nil && !c(p) {
+						return fmt.Errorf("port %d is busy on this server", p)
+					}
+					return nil
+				}),
+		).Title("CDN"))
+	}
 	kcpMode, fec := d.KCPMode, d.FEC
 	if has("kcp") || has("ftcp") {
 		groups = append(groups, huh.NewGroup(
@@ -282,6 +313,9 @@ func wizardKharej(path string) error {
 		o.Backup = []string{"ws"}
 	}
 	o.CDN = strings.TrimSpace(cdnDomain)
+	if p, _ := strconv.Atoi(cdnPort); p != 0 {
+		o.CDNOriginPort, o.CDNOriginTLS = p, true
+	}
 	o.KCPMode, o.FEC = kcpMode, fec
 	o.AllowLocal = setup.SplitList(allow)
 	o.Profile, o.Cipher, o.Fingerprint = profile, cipher, fp

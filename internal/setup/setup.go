@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -605,6 +606,11 @@ func Kharej(o KharejOptions) (*Result, error) {
 	return res, nil
 }
 
+// CFHTTPSPorts are the HTTPS ports Cloudflare proxies. In Full SSL mode it
+// reaches the origin on the same port the client connected to, so a busy
+// 443 on the origin can be avoided without an Origin Rule.
+var CFHTTPSPorts = []int{443, 2053, 2083, 2087, 2096, 8443}
+
 // addCDN adds the backup link through Cloudflare. The server the domain
 // points at (kharej in direct mode, iran in reverse) listens on the origin
 // port; the other side dials wss to the CDN on 443.
@@ -624,9 +630,21 @@ func (o *KharejOptions) addCDN(cfg *node.Config, tk *Token, res *Result, usedPor
 		}
 		origins = []origin{{o.CDNOriginPort, kind}}
 	}
+	// the dialing side connects to Cloudflare on 443, or on the origin's
+	// own port for Full SSL on one of Cloudflare's other HTTPS ports
+	dialPort := "443"
+	full := !auto && o.CDNOriginTLS && slices.Contains(CFHTTPSPorts, o.CDNOriginPort)
+	if full {
+		dialPort = strconv.Itoa(o.CDNOriginPort)
+	}
 	if !direct {
+		if !auto {
+			if other, dup := usedPorts[o.CDNOriginPort]; dup {
+				return fmt.Errorf("cdn origin port %d is already used by the %s link on the iran server", o.CDNOriginPort, other)
+			}
+		}
 		cfg.Dial = append(cfg.Dial, node.DialConf{Name: "cdn", Transport: "wss",
-			Addrs: []string{net.JoinHostPort(o.CDN, "443")}, SNI: o.CDN, Host: o.CDN, Path: o.Path,
+			Addrs: []string{net.JoinHostPort(o.CDN, dialPort)}, SNI: o.CDN, Host: o.CDN, Path: o.Path,
 			Conns: o.Conns, Backup: true, CDN: o.CDN})
 		for _, x := range origins {
 			tk.Links = append(tk.Links, Link{Name: "cdn", T: x.kind, Mode: "r", Addrs: []string{":" + strconv.Itoa(x.port)},
@@ -634,6 +652,7 @@ func (o *KharejOptions) addCDN(cfg *node.Config, tk *Token, res *Result, usedPor
 		}
 		res.note("in Cloudflare point "+o.CDN+" (orange cloud) at the IRAN server's IP",
 			"در Cloudflare دامنهٔ "+o.CDN+" را (ابر نارنجی) به IP سرور ایران وصل کنید")
+		o.sslNote(res, auto, full)
 		return nil
 	}
 	var ok []origin
@@ -668,7 +687,7 @@ func (o *KharejOptions) addCDN(cfg *node.Config, tk *Token, res *Result, usedPor
 		return errors.New("ports 80 and 443 are both busy, so Cloudflare cannot reach this server; free one or set a CDN origin port with an Origin Rule")
 	}
 	tk.Links = append(tk.Links, Link{
-		Name: "cdn", T: "wss", Mode: "d", Addrs: []string{net.JoinHostPort(o.CDN, "443")},
+		Name: "cdn", T: "wss", Mode: "d", Addrs: []string{net.JoinHostPort(o.CDN, dialPort)},
 		SNI: o.CDN, Host: o.CDN, Path: o.Path, Conns: o.Conns, Backup: true, CDN: true,
 	})
 	res.note("in Cloudflare point "+o.CDN+" (orange cloud) at THIS server's IP",
@@ -678,7 +697,7 @@ func (o *KharejOptions) addCDN(cfg *node.Config, tk *Token, res *Result, usedPor
 		switch {
 		case x.port == 80 && x.kind == "ws":
 			modes, modesFa = append(modes, "Flexible"), append(modesFa, "Flexible")
-		case x.port == 443 && x.kind == "wss":
+		case x.kind == "wss" && slices.Contains(CFHTTPSPorts, x.port):
 			modes, modesFa = append(modes, "Full"), append(modesFa, "Full")
 		default:
 			res.note(fmt.Sprintf("origin port is %d: add Rules > Origin Rules > Destination port = %d for this hostname", x.port, x.port),
@@ -825,4 +844,21 @@ func Iran(o IranOptions) (*Result, error) {
 			"حالت معکوس: سرور خارج روی "+strings.Join(listenPorts, "، ")+" به این سرور وصل می‌شود؛ در فایروال باز کنید")
 	}
 	return res, nil
+}
+
+// sslNote says which Cloudflare SSL mode a reverse CDN link needs.
+func (o *KharejOptions) sslNote(res *Result, auto, full bool) {
+	switch {
+	case auto:
+		res.note("Cloudflare SSL/TLS mode: Flexible, or Full if port 443 is free on the iran server (not Full strict)",
+			"حالت SSL/TLS کلودفلر: Flexible، یا Full اگر پورت 443 سرور ایران آزاد باشد (نه Full strict)")
+	case full:
+		res.note(fmt.Sprintf("Cloudflare SSL/TLS mode: Full (not strict); open port %d on the iran server", o.CDNOriginPort),
+			fmt.Sprintf("حالت SSL/TLS کلودفلر: Full (نه strict)؛ پورت %d را روی سرور ایران باز کنید", o.CDNOriginPort))
+	case o.CDNOriginPort == 80 && !o.CDNOriginTLS:
+		res.note("Cloudflare SSL/TLS mode: Flexible", "حالت SSL/TLS کلودفلر: Flexible")
+	default:
+		res.note(fmt.Sprintf("origin port is %d: add Rules > Origin Rules > Destination port = %d for this hostname", o.CDNOriginPort, o.CDNOriginPort),
+			fmt.Sprintf("پورت مبدأ %d است: در Cloudflare از Rules > Origin Rules مقدار Destination port را %d بگذارید", o.CDNOriginPort, o.CDNOriginPort))
+	}
 }
